@@ -1,0 +1,1412 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>物件位置さがし</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+/* Layout: map fills the screen; the control panel docks left on desktop and sits under a sticky map on phones */
+:root{
+  --bg:#f2f4f1; --panel:#ffffff; --ink:#1b2320; --muted:#5d6a65; --line:#d8dfdb;
+  --accent:#1d6b58; --accent-ink:#ffffff; --soft:#e6f0ec; --warn:#a84a22; --ok:#1d6b58; --bad:#b3261e;
+  --f-ui:"Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP","Yu Gothic",system-ui,sans-serif;
+  --f-num:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#121715;--panel:#1a201e;--ink:#e4ebe8;--muted:#98a6a0;--line:#2d3633;
+    --accent:#5cc2a3;--accent-ink:#0b1310;--soft:#1f2d28;--warn:#e38c64;--ok:#5cc2a3;--bad:#f2867c;color-scheme:dark}
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:15px/1.6 var(--f-ui);
+  display:grid;grid-template-columns:minmax(330px,420px) 1fr;}
+#panel{overflow-y:auto;background:var(--panel);border-right:1px solid var(--line);
+  padding:20px 18px 40px;display:flex;flex-direction:column;gap:18px;min-width:0}
+#mapwrap{position:relative;min-height:300px;height:100%}
+#map{position:absolute;inset:0}
+#legend{position:absolute;left:10px;bottom:28px;z-index:800;max-width:min(300px,calc(100% - 20px));max-height:55%;overflow:auto;
+  background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,.15)}
+#legend h3{font-size:12px;margin:6px 0 4px}
+#legend h3:first-child{margin-top:0}
+#legend .sw{display:flex;gap:6px;align-items:center;line-height:1.5}
+#legend .sw i{width:14px;height:12px;border-radius:2px;flex:none;border:1px solid rgba(0,0,0,.15)}
+#legend img{max-width:100%;display:block;background:#fff;border-radius:4px}
+@media (max-width:760px){
+  body{grid-template-columns:1fr;height:auto;display:block}
+  #mapwrap{position:sticky;top:0;height:50vh;z-index:5;border-bottom:1px solid var(--line)}
+  #panel{border-right:0;overflow:visible}
+  #legend{max-height:40%;bottom:20px}
+}
+h1{font-size:20px;margin:0;letter-spacing:.02em;text-wrap:balance}
+.sub{margin:2px 0 0;color:var(--muted);font-size:13px}
+h2{font-size:12px;letter-spacing:.12em;color:var(--muted);margin:0 0 8px;font-weight:700}
+section{display:flex;flex-direction:column;gap:8px}
+input,select,textarea,button{font:inherit;color:inherit}
+input[type=text],input[type=number],select,textarea{
+  background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:7px 9px;font-size:16px;min-width:0}
+textarea{width:100%;min-height:84px;resize:vertical;font-size:14px}
+input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+button{cursor:pointer;border-radius:6px;border:1px solid var(--line);background:var(--panel);padding:7px 12px}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:700}
+button.ghost{background:transparent}
+button:disabled{opacity:.5;cursor:wait}
+.row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.grow{flex:1 1 140px}
+.num{font-family:var(--f-num);font-variant-numeric:tabular-nums}
+a{color:var(--accent)}
+
+/* result */
+#result{background:var(--soft);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px}
+#result .big{font-size:20px;font-weight:700;line-height:1.35}
+#result .meta{font-size:13px;color:var(--muted)}
+#result .regions{display:flex;flex-direction:column;gap:6px;margin:0;padding:0;list-style:none}
+#result .regions li{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px}
+.legendrow{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+.legendrow i{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-2px;margin-right:4px}
+.tag{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--accent);color:var(--accent-ink);font-weight:700;font-size:12px;flex:none}
+#result a,#check a{font-weight:500}
+.hint{font-size:13px;color:var(--muted);margin:0}
+.warn{color:var(--warn)}
+.ok{color:var(--ok)}
+.bad{color:var(--bad)}
+
+/* hazard check */
+#hz{border:1px solid var(--line);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px}
+.hzrow{display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:6px 0;border-bottom:1px solid var(--line);font-size:13px}
+.hzrow:last-child{border-bottom:0}
+.hzrow .v{text-align:right;font-weight:700}
+.hzrow .d{grid-column:1/3;color:var(--muted);font-size:12px}
+.pill{display:inline-block;border-radius:999px;padding:0 8px;font-size:12px;font-weight:700;border:1px solid currentColor}
+
+/* overlays */
+.ovgroup{display:flex;flex-direction:column;gap:2px}
+.ovgroup h3{font-size:13px;margin:6px 0 2px}
+.ov{display:flex;gap:8px;align-items:flex-start;font-size:14px;line-height:1.45;padding:3px 0;cursor:pointer}
+.ov input{margin-top:3px;accent-color:var(--accent)}
+.ov small{display:block;color:var(--muted);font-size:12px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg button{border:0;border-radius:0;padding:5px 10px;font-size:13px}
+.seg button[aria-pressed=true]{background:var(--accent);color:var(--accent-ink)}
+#upList{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;font-size:13px}
+#upList li{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+#zipPick{border:1px solid var(--line);border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:4px;font-size:13px;max-height:220px;overflow:auto}
+
+/* candidates */
+#cands{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+#cands button{width:100%;text-align:left;font-size:13px;padding:6px 9px;line-height:1.4}
+
+/* point list */
+#points{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.pt{border:1px solid var(--line);border-radius:8px;padding:10px;display:grid;grid-template-columns:28px 1fr auto;gap:6px 8px;align-items:center}
+.pt.off{opacity:.5}
+.dot{width:24px;height:24px;border-radius:50%;background:var(--c);color:#fff;display:grid;place-items:center;font-weight:700;font-size:12px}
+.pt .pname{width:100%}
+.pt .del{border:0;background:transparent;font-size:18px;line-height:1;padding:4px 8px;color:var(--muted)}
+.pt .ctl{grid-column:2/4;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.pt .pval{width:84px}
+.pt .rng{font-size:12px;color:var(--muted);margin-left:auto}
+.pt .note{grid-column:2/4;font-size:12px;margin:0}
+.pt label{font-size:13px;display:flex;gap:4px;align-items:center}
+.empty{border:1px dashed var(--line);border-radius:8px;padding:14px;color:var(--muted);font-size:13px}
+
+/* check table */
+#check{border:1px solid var(--line);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px}
+.tbl{overflow-x:auto}
+.tbl table{border-collapse:collapse;width:100%;font-size:13px}
+.tbl th,.tbl td{padding:5px 6px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+.tbl th:first-child,.tbl td:first-child{text-align:left;white-space:normal}
+.tbl th{font-size:11px;color:var(--muted);font-weight:500}
+
+/* settings */
+.set{display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:center;font-size:14px}
+.set input[type=range]{grid-column:1/3;width:100%;accent-color:var(--accent)}
+.set small{grid-column:1/3;color:var(--muted);font-size:12px;line-height:1.5}
+details{font-size:13px;color:var(--muted);border-top:1px solid var(--line);padding-top:12px}
+details summary{cursor:pointer;color:var(--ink);font-weight:500}
+details p{margin:8px 0 0}
+.banner{font-size:12px;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 10px;display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+#status{font-size:13px;color:var(--muted);margin:0;min-height:1em}
+
+/* map pieces */
+.pin{width:26px;height:26px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:var(--c);border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35);display:grid;place-items:center}
+.pin span{transform:rotate(45deg);color:#fff;font:700 12px var(--f-ui)}
+.ctr{background:#1d6b58;color:#fff;border:2px solid #fff;border-radius:12px;padding:1px 8px;font:700 12px var(--f-ui);white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.35);display:inline-block}
+.truth{width:28px;height:28px;display:grid;place-items:center;background:#111;color:#ffd84a;border:2px solid #fff;border-radius:50%;font-size:16px;box-shadow:0 1px 4px rgba(0,0,0,.4)}
+.gridpx{image-rendering:pixelated}
+.leaflet-container{font-family:var(--f-ui)}
+.leaflet-popup-content{font-size:13px;line-height:1.5;margin:10px 12px}
+.pop table{border-collapse:collapse}
+.pop td{padding:2px 6px 2px 0;vertical-align:top;border-bottom:1px solid #e3e3e3}
+.pop td:first-child{color:#666;white-space:nowrap}
+#map.picking{cursor:crosshair}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<aside id="panel">
+  <header>
+    <h1>物件位置さがし</h1>
+    <p class="sub">「駅徒歩◯分（◯m）」「小学校まで約◯m」を重ねて物件の範囲を推定し、浸水・地震・都市計画道路を確認します。</p>
+  </header>
+
+  <section>
+    <h2>基準の住所（分かっている所まで）</h2>
+    <div class="row">
+      <input type="text" id="areaQ" class="grow" placeholder="例）埼玉県上尾市瓦葺" autocomplete="off">
+      <button id="areaBtn">範囲を設定</button>
+    </div>
+    <div class="row">
+      <button id="areaDraw" class="ghost">地図に描く</button>
+      <button id="areaClear" class="ghost" hidden>解除</button>
+    </div>
+    <p id="areaStatus" class="hint">町名・丁目まで入れると、その境界の内側だけで推定します。先に設定しておくと、目印の検索もこの周辺に絞られます。</p>
+  </section>
+
+  <div id="result" aria-live="polite"></div>
+  <div id="hz" hidden aria-live="polite"></div>
+
+  <section>
+    <h2>物件情報から読み取る</h2>
+    <textarea id="paste" placeholder="交通・周辺環境の欄をそのまま貼り付け&#10;例）JR中央線「三鷹」駅 徒歩7分（560m）&#10;　　京王井の頭線「井の頭公園」駅 徒歩18分（1420m）&#10;　　市立第三小学校 約450m"></textarea>
+    <div class="row"><button class="primary" id="parseBtn">読み取って地点を追加</button></div>
+    <p id="status"></p>
+  </section>
+
+  <section>
+    <h2>地点を1つずつ追加</h2>
+    <div class="row">
+      <input type="text" id="q" class="grow" placeholder="駅名・施設名・住所" autocomplete="off">
+      <select id="mode" aria-label="条件の種類"><option value="dist">道のり</option><option value="walk">徒歩</option></select>
+      <input type="number" id="val" class="num" value="560" min="1" step="1" style="width:84px" aria-label="値">
+      <span id="unit">m</span>
+    </div>
+    <div class="row">
+      <button id="searchBtn">検索</button>
+      <button id="pickBtn" class="ghost">地図をタップして置く</button>
+    </div>
+    <ul id="cands"></ul>
+    <p class="hint">「徒歩◯分（◯m）」とm数が書いてあるときは「道のり」でm数を入れると精度が上がります。</p>
+  </section>
+
+  <section>
+    <h2>地点</h2>
+    <div id="sampleBanner" class="banner" hidden><span>サンプル（三鷹駅・吉祥寺駅）を表示中です</span><button id="clearBtn" class="ghost">すべて消去</button></div>
+    <ul id="points"></ul>
+    <p class="hint">ピンはドラッグで動かせます。駅は物件側の改札・出入口に寄せると精度が上がります。</p>
+  </section>
+
+  <section>
+    <h2>重ねる情報</h2>
+    <div class="row" style="justify-content:space-between">
+      <span style="font-size:13px">候補エリアの表示</span>
+      <span class="seg" role="group" aria-label="候補エリアの表示">
+        <button id="fillBtn" aria-pressed="true">塗り</button><button id="lineBtn" aria-pressed="false">輪郭だけ</button>
+      </span>
+    </div>
+    <div id="ovList"></div>
+    <div class="set">
+      <label for="ovOp">重ねる情報の濃さ</label><span class="num" id="ovOpOut"></span>
+      <input type="range" id="ovOp" min="0.2" max="1" step="0.05">
+    </div>
+    <p class="hint">地図をタップすると、その地点の浸水深や区域の判定がポップアップで出ます（地点を置くモード中を除く）。</p>
+  </section>
+
+  <section>
+    <h2>都市計画道路</h2>
+    <p class="hint">都市計画道路は地図タイルで配信されていないため、国の「都市計画決定情報」ファイルを読み込んで表示します。<a href="https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-A55-2024.html" target="_blank" rel="noopener">国土数値情報（都市計画決定情報）</a>で都道府県を選んでダウンロードし、ZIPのまま、または中のGeoJSON・Shapefileを選んでください。用途地域などのファイルも同じように重ねられます。</p>
+    <div class="row">
+      <input type="file" id="upFile" accept=".zip,.geojson,.json" aria-label="都市計画ファイル">
+    </div>
+    <div id="zipPick" hidden></div>
+    <ul id="upList"></ul>
+    <p id="upStatus" class="hint"></p>
+  </section>
+
+  <section>
+    <h2>答え合わせ</h2>
+    <p class="hint">場所が分かっている物件の正解位置を置くと、地点ごとに「道のり÷直線距離」を計算します。その地域の回り道の多さが分かり、設定に反映できます。</p>
+    <div class="row">
+      <button id="truthBtn">正解の位置を置く</button>
+      <button id="truthClear" class="ghost" hidden>正解を消す</button>
+    </div>
+    <div id="check" hidden></div>
+  </section>
+
+  <section>
+    <h2>補正</h2>
+    <div class="set">
+      <label for="mu">平均の迂回率</label><span class="num" id="muOut"></span>
+      <input type="range" id="mu" min="1" max="1.8" step="0.05">
+      <small>道のり÷直線距離の目安です。碁盤目の街なら1.2前後、坂・川・線路で回り道が多い所は1.4以上。ここは「一番ありそうな距離」を決めるだけで、範囲の切り捨てには使いません。</small>
+    </div>
+    <div class="set">
+      <label for="slack">起点の位置ずれ</label><span class="num" id="slackOut"></span>
+      <input type="range" id="slack" min="0" max="200" step="10">
+      <small>駅は出入口から測り、物件側も敷地の一番近い点から測ります。大きな駅ほど広めに。</small>
+    </div>
+  </section>
+
+  <details>
+    <summary>計算のしかた</summary>
+    <p>不動産広告の徒歩時間は「道路距離80mを1分、端数は1分に切り上げ」と決められています（不動産の表示に関する公正競争規約）。「徒歩7分（560m）」のようにm数があればそちらを使います。</p>
+    <p>直線距離は道のりより長くならないので、各地点から「道のり＋位置ずれ」の円の外には物件はありません。全部の円が重なる薄い緑の範囲が「ありうる範囲」です。</p>
+    <p>そのうえで、直線距離が「道のり÷平均の迂回率」に近いほど点数を高くし、全地点の点数を掛け合わせて濃淡を付けています。濃い緑が確率の上位50%、中くらいの緑が上位90%です。</p>
+  </details>
+  <details>
+    <summary>重ねる情報の出典と注意</summary>
+    <p>浸水・内水・高潮・津波・土砂災害：<a href="https://disaportal.gsi.go.jp/hazardmapportal/hazardmap/copyright/opendata.html" target="_blank" rel="noopener">ハザードマップポータルサイト</a>（国土交通省・国土地理院）。内水は公表している自治体の分だけ収録されています。表示がない＝安全、ではありません。</p>
+    <p>地震：<a href="https://www.j-shis.bosai.go.jp/" target="_blank" rel="noopener">J-SHIS 地震ハザードステーション</a>（防災科学技術研究所）の確率論的地震動予測地図2024年版（平均ケース・全地震）と表層地盤増幅率（250mメッシュ）。</p>
+    <p>明治期の低湿地・治水地形分類図：<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>。昔の水田・湿地・旧河道は液状化や浸水が起きやすい土地の目安になります。</p>
+    <p>都市計画道路：<a href="https://nlftp.mlit.go.jp/ksj/" target="_blank" rel="noopener">国土数値情報</a>（CC BY 4.0）。境界はおおよそで、最新の決定・変更が反映されていないことがあります。購入判断の前に、自治体の都市計画課や重要事項説明で必ず確認してください。</p>
+  </details>
+</aside>
+<div id="mapwrap"><div id="map"></div><div id="legend" hidden></div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+const WALK = 80;
+const COLORS = ['#d1495b','#2e7fb0','#d98a1f','#6a4c93','#3a7d44','#b84a8f','#4f6d7a','#8c5e3c'];
+const KEY = 'bukken-ichi-v2';
+const UPKEY = 'bukken-ichi-up-v1';
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+const SAMPLE = {
+  sample: true, mu: 1.3, slack: 50, truth: null,
+  points: [
+    {id:1, name:'三鷹駅', lat:35.70265, lng:139.56062, mode:'walk', value:10, on:true},
+    {id:2, name:'吉祥寺駅', lat:35.70318, lng:139.57996, mode:'walk', value:15, on:true}
+  ]
+};
+
+let state;
+try { state = JSON.parse(localStorage.getItem(KEY)); } catch(e) {}
+if (!state || !Array.isArray(state.points)) state = JSON.parse(JSON.stringify(SAMPLE));
+if (!state.mu) state.mu = 1.3;
+if (!Array.isArray(state.ov)) state.ov = [];
+if (!state.ovOp) state.ovOp = 0.7;
+if (!state.gridMode) state.gridMode = 'fill';
+let nextId = state.points.reduce((m,p)=>Math.max(m,p.id),0) + 1;
+function save(){ try { localStorage.setItem(KEY, JSON.stringify(state)); } catch(e) {} }
+
+/* ---------- map ---------- */
+const map = L.map('map', {preferCanvas:true});
+const gsiAttr = '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank">地理院タイル</a>';
+const base = {
+  '地理院地図 淡色': L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png', {maxZoom:19, maxNativeZoom:18, attribution:gsiAttr}),
+  '地理院地図 標準': L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', {maxZoom:19, maxNativeZoom:18, attribution:gsiAttr}),
+  'OpenStreetMap': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19, attribution:'&copy; OpenStreetMap contributors'}),
+  '航空写真': L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg', {maxZoom:19, maxNativeZoom:18, attribution:gsiAttr})
+};
+base['地理院地図 淡色'].addTo(map);
+L.control.layers(base, null, {position:'topright'}).addTo(map);
+L.control.scale({imperial:false}).addTo(map);
+map.createPane('hazard').style.zIndex = 320;
+map.createPane('mask').style.zIndex = 345;
+map.getPane('mask').style.pointerEvents = 'none';
+map.createPane('grid').style.zIndex = 350;
+map.createPane('urban').style.zIndex = 390;
+
+let pointLayers = [], gridLayers = [], centerMarkers = [], truthMarker = null, lastGrid = null, lastRegions = [];
+
+/* ---------- overlay definitions ---------- */
+const DP = 'https://disaportaldata.gsi.go.jp/raster/';
+const CJ = 'https://cyberjapandata.gsi.go.jp/xyz/';
+const JS = 'https://www.j-shis.bosai.go.jp/map/wms/';
+const hzAttr = '<a href="https://disaportal.gsi.go.jp/" target="_blank">ハザードマップポータルサイト</a>';
+const jsAttr = '<a href="https://www.j-shis.bosai.go.jp/" target="_blank">J-SHIS（防災科研）</a>';
+// 浸水深の凡例（ハザードマップポータルの現行凡例）
+const DEPTH = [
+  {rgb:[247,245,169], label:'0.5m未満', rank:1, note:'床下浸水程度'},
+  {rgb:[255,216,192], label:'0.5〜3m', rank:2, note:'1階床上〜1階軒下'},
+  {rgb:[255,183,183], label:'3〜5m', rank:3, note:'2階床上'},
+  {rgb:[255,145,145], label:'5〜10m', rank:4, note:'2階軒下以上'},
+  {rgb:[242,133,201], label:'10〜20m', rank:5, note:''},
+  {rgb:[220,122,220], label:'20m以上', rank:6, note:''}
+];
+const OVL = [
+  {g:'水害', id:'flood_l2', name:'洪水 浸水想定（想定最大規模）', sub:'1000年に1回程度の大雨。重要事項説明で使われるのはこれ', url:DP+'01_flood_l2_shinsuishin_data/{z}/{x}/{y}.png', max:17, kind:'depth', attr:hzAttr},
+  {g:'水害', id:'flood_l1', name:'洪水 浸水想定（計画規模）', sub:'100〜200年に1回程度の大雨', url:DP+'01_flood_l1_shinsuishin_newlegend_data/{z}/{x}/{y}.png', max:17, kind:'depth', attr:hzAttr},
+  {g:'水害', id:'naisui', name:'内水（雨水出水）浸水想定', sub:'下水・水路があふれる浸水。公表済み自治体のみ', url:DP+'02_naisui_data/{z}/{x}/{y}.png', max:17, kind:'depth', attr:hzAttr},
+  {g:'水害', id:'hanran', name:'家屋倒壊等氾濫想定区域（氾濫流）', sub:'堤防決壊の流れで木造家屋が倒壊するおそれ', url:DP+'01_flood_l2_kaokutoukai_hanran_data/{z}/{x}/{y}.png', max:17, min:4, kind:'any', attr:hzAttr},
+  {g:'水害', id:'kagan', name:'家屋倒壊等氾濫想定区域（河岸侵食）', sub:'川岸が削られて家屋が流失するおそれ', url:DP+'01_flood_l2_kaokutoukai_kagan_data/{z}/{x}/{y}.png', max:17, min:4, kind:'any', attr:hzAttr},
+  {g:'水害', id:'keizoku', name:'浸水継続時間（想定最大規模）', sub:'水が引くまでの時間', url:DP+'01_flood_l2_keizoku_data/{z}/{x}/{y}.png', max:17, kind:'any', attr:hzAttr},
+  {g:'水害', id:'takashio', name:'高潮 浸水想定', url:DP+'03_hightide_l2_shinsuishin_data/{z}/{x}/{y}.png', max:17, kind:'depth', attr:hzAttr},
+  {g:'水害', id:'tsunami', name:'津波 浸水想定', url:DP+'04_tsunami_newlegend_data/{z}/{x}/{y}.png', max:17, kind:'depth', attr:hzAttr},
+  {g:'土砂災害', id:'doseki', name:'土砂災害警戒区域（土石流）', url:DP+'05_dosekiryukeikaikuiki/{z}/{x}/{y}.png', max:17, kind:'any', attr:hzAttr},
+  {g:'土砂災害', id:'kyukei', name:'土砂災害警戒区域（急傾斜地の崩壊）', url:DP+'05_kyukeishakeikaikuiki/{z}/{x}/{y}.png', max:17, kind:'any', attr:hzAttr},
+  {g:'地震', id:'jshis', name:'30年以内に震度6弱以上の揺れに見舞われる確率', sub:'2024年版・平均ケース・全地震', wms:JS+'pshm/Y2024', layer:'P-Y2024-MAP-AVR-TTL_MTTL-T30_I55_PD', attr:jsAttr},
+  {g:'地震', id:'amp', name:'表層地盤増幅率（揺れやすさ）', sub:'1.6以上は揺れやすい地盤の目安', wms:JS+'sstrct/V4', layer:'Z-V4-JAPAN-AMP-VS400_M250-IDARV2', attr:jsAttr},
+  {g:'地震', id:'swale', name:'明治期の低湿地', sub:'昔の水田・湿地。液状化しやすい土地の目安', url:CJ+'swale/{z}/{x}/{y}.png', max:16, min:10, kind:'any', attr:gsiAttr},
+  {g:'地震', id:'lcmfc2', name:'治水地形分類図', sub:'旧河道・後背湿地・盛土地など', url:CJ+'lcmfc2/{z}/{x}/{y}.png', max:16, min:11, kind:null, attr:gsiAttr}
+];
+const ovLayers = {};
+function makeLayer(o){
+  if (o.wms) return L.tileLayer.wms(o.wms, {layers:o.layer, format:'image/png', transparent:true, version:'1.3.0', pane:'hazard', opacity:state.ovOp, attribution:o.attr, maxZoom:19});
+  return L.tileLayer(o.url, {pane:'hazard', opacity:state.ovOp, maxNativeZoom:o.max, minNativeZoom:o.min||2, maxZoom:19, attribution:o.attr, errorTileUrl:'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=='});
+}
+function renderOvList(){
+  let html = '', g = '';
+  for (const o of OVL) {
+    if (o.g !== g) { if (g) html += '</div>'; g = o.g; html += `<div class="ovgroup"><h3>${g}</h3>`; }
+    html += `<label class="ov"><input type="checkbox" id="ov-${o.id}" data-id="${o.id}"${state.ov.includes(o.id)?' checked':''}><span>${esc(o.name)}${o.sub?`<small>${esc(o.sub)}</small>`:''}</span></label>`;
+  }
+  html += '</div>';
+  $('#ovList').innerHTML = html;
+}
+function syncOverlays(){
+  for (const o of OVL) {
+    const on = state.ov.includes(o.id);
+    if (on && !ovLayers[o.id]) { ovLayers[o.id] = makeLayer(o).addTo(map); }
+    if (!on && ovLayers[o.id]) { map.removeLayer(ovLayers[o.id]); delete ovLayers[o.id]; }
+    if (on) ovLayers[o.id].setOpacity(state.ovOp);
+  }
+  renderLegend();
+}
+function renderLegend(){
+  const on = OVL.filter(o => state.ov.includes(o.id));
+  const box = $('#legend');
+  if (!on.length && !upLayers.length) { box.hidden = true; return; }
+  let html = '';
+  if (on.some(o => o.kind === 'depth')) {
+    html += '<h3>浸水深</h3>' + DEPTH.map(d => `<div class="sw"><i style="background:rgb(${d.rgb})"></i>${d.label}${d.note?`<span style="color:var(--muted)">（${d.note}）</span>`:''}</div>`).join('');
+  }
+  for (const o of on) {
+    if (o.kind === 'depth') continue;
+    if (o.wms) {
+      const src = `${o.wms}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetLegendGraphic&LAYER=${o.layer}&FORMAT=image/png&SLD_VERSION=1.1.0`;
+      html += `<h3>${esc(o.name)}</h3><img src="${src}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{textContent:'凡例を取得できませんでした。色が赤・紫に近いほど高い値です。'}))">`;
+    } else if (o.kind === 'any') {
+      html += `<h3>${esc(o.name)}</h3><div style="color:var(--muted)">色が付いている所が区域内</div>`;
+    } else {
+      html += `<h3>${esc(o.name)}</h3><div style="color:var(--muted)">凡例は<a href="https://maps.gsi.go.jp/" target="_blank" rel="noopener">地理院地図</a>で確認できます</div>`;
+    }
+  }
+  if (upLayers.length) html += '<h3>都市計画（読み込んだファイル）</h3>' + upLayers.map(u => `<div class="sw"><i style="background:${u.color}"></i>${esc(u.name)}</div>`).join('');
+  box.innerHTML = html; box.hidden = false;
+}
+$('#ovList').addEventListener('change', e => {
+  const id = e.target.dataset.id; if (!id) return;
+  const was = state.ov.length;
+  state.ov = e.target.checked ? [...new Set([...state.ov, id])] : state.ov.filter(x => x !== id);
+  if (!was && state.ov.length && state.gridMode === 'fill' && !state.gridModeSet) { state.gridMode = 'line'; syncGridMode(); compute(); }
+  save(); syncOverlays();
+});
+function syncGridMode(){
+  $('#fillBtn').setAttribute('aria-pressed', state.gridMode === 'fill');
+  $('#lineBtn').setAttribute('aria-pressed', state.gridMode === 'line');
+}
+$('#fillBtn').onclick = () => { state.gridMode = 'fill'; state.gridModeSet = true; save(); syncGridMode(); compute(); };
+$('#lineBtn').onclick = () => { state.gridMode = 'line'; state.gridModeSet = true; save(); syncGridMode(); compute(); };
+$('#ovOp').addEventListener('input', e => { state.ovOp = +e.target.value; $('#ovOpOut').textContent = Math.round(state.ovOp*100) + '%'; save(); syncOverlays(); });
+
+/* ---------- tile pixel sampling ---------- */
+const tileCache = new Map();
+function lonLatToPx(lat, lng, z){
+  const n = 2 ** z, s = Math.sin(lat*Math.PI/180);
+  const x = (lng + 180) / 360 * n * 256;
+  const y = (0.5 - Math.log((1+s)/(1-s)) / (4*Math.PI)) * n * 256;
+  return {tx:Math.floor(x/256), ty:Math.floor(y/256), px:Math.floor(x)%256, py:Math.floor(y)%256};
+}
+function getTile(url){
+  if (tileCache.has(url)) return tileCache.get(url);
+  const p = (async () => {
+    let r;
+    try { r = await fetch(url, {mode:'cors'}); } catch(e) { return {err:true}; }
+    if (!r.ok) return {empty:true};
+    try {
+      const bmp = await createImageBitmap(await r.blob());
+      const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
+      const ctx = c.getContext('2d', {willReadFrequently:true}); ctx.drawImage(bmp, 0, 0);
+      return {data: ctx.getImageData(0, 0, c.width, c.height).data, w: c.width};
+    } catch(e) { return {empty:true}; }
+  })();
+  tileCache.set(url, p);
+  return p;
+}
+function classify(o, rgba){
+  if (!rgba || rgba[3] < 40) return null;
+  if (o.kind === 'depth') {
+    let best = null, bd = 1e9;
+    for (const d of DEPTH) { const dd = (d.rgb[0]-rgba[0])**2 + (d.rgb[1]-rgba[1])**2 + (d.rgb[2]-rgba[2])**2; if (dd < bd) { bd = dd; best = d; } }
+    return bd < 45*45 ? {rank:best.rank, label:best.label} : {rank:1, label:'区域内'};
+  }
+  return {rank:1, label:'区域内'};
+}
+async function samplePoint(o, lat, lng){
+  const z = o.max >= 17 ? 17 : o.max;
+  const {tx, ty, px, py} = lonLatToPx(lat, lng, z);
+  const t = await getTile(o.url.replace('{z}', z).replace('{x}', tx).replace('{y}', ty));
+  if (t.err) return {err:true};
+  if (t.empty) return {v:null};
+  const i = (py * t.w + px) * 4;
+  return {v: classify(o, [t.data[i], t.data[i+1], t.data[i+2], t.data[i+3]])};
+}
+const SAMPLEABLE = OVL.filter(o => o.kind && o.url);
+
+map.on('click', async e => {
+  if (picking || truthPicking || drawing) return;
+  const {lat, lng} = e.latlng;
+  const pop = L.popup({maxWidth:300}).setLatLng(e.latlng).setContent('<div class="pop">判定中…</div>').openOn(map);
+  const res = await Promise.all(SAMPLEABLE.map(o => samplePoint(o, lat, lng)));
+  if (res.every(r => r.err)) { pop.setContent('<div class="pop">データを取得できませんでした。ネットワークを確認するか、色の付いたレイヤーを表示して目で確認してください。</div>'); return; }
+  const rows = SAMPLEABLE.map((o, i) => {
+    const r = res[i];
+    const v = r.err ? '<span style="color:#888">取得できず</span>' : r.v ? `<b style="color:#b3261e">${esc(r.v.label)}</b>` : '<span style="color:#1d6b58">なし</span>';
+    return `<tr><td>${esc(o.name.replace(/（.*?）/, m => m.length > 10 ? '' : m))}</td><td>${v}</td></tr>`;
+  }).join('');
+  pop.setContent(`<div class="pop"><div class="num" style="font-size:11px;color:#666">${lat.toFixed(5)}, ${lng.toFixed(5)}</div><table>${rows}</table>
+    <div style="margin-top:6px"><a href="https://disaportal.gsi.go.jp/maps/?ll=${lat.toFixed(6)},${lng.toFixed(6)}&z=16&base=pale" target="_blank" rel="noopener">重ねるハザードマップで開く</a></div></div>`);
+});
+
+/* ---------- candidate hazard check ---------- */
+async function checkHazards(){
+  const box = $('#hz');
+  if (!lastGrid || !lastRegions.length) return;
+  box.hidden = false;
+  box.innerHTML = '<h2 style="margin:0">候補エリアのハザード</h2><p class="hint">判定中…</p>';
+  const {nx, ny, cell, x0, y1, level, toLL} = lastGrid;
+  const cells = [];
+  for (let k = 0; k < level.length; k++) if (level[k] === 3) cells.push(k);
+  const step = Math.max(1, Math.floor(cells.length / 150));
+  const pts = [];
+  for (let n = 0; n < cells.length; n += step) {
+    const k = cells[n], i = k % nx, j = (k / nx) | 0;
+    pts.push(toLL(x0 + (i+0.5)*cell, y1 - (j+0.5)*cell));
+  }
+  const top = lastRegions[0].ll;
+  const out = [];
+  let anyErr = 0;
+  for (const o of SAMPLEABLE) {
+    const r0 = await samplePoint(o, top[0], top[1]);
+    if (r0.err) { anyErr++; out.push({o, err:true}); continue; }
+    const rs = await Promise.all(pts.map(p => samplePoint(o, p[0], p[1])));
+    let hit = 0, worst = null;
+    for (const r of rs) if (r.v) { hit++; if (!worst || r.v.rank > worst.rank) worst = r.v; }
+    out.push({o, frac: rs.length ? hit / rs.length : 0, worst, center: r0.v});
+  }
+  if (anyErr === SAMPLEABLE.length) {
+    box.innerHTML = '<h2 style="margin:0">候補エリアのハザード</h2><p class="hint warn">データを取得できませんでした。「重ねる情報」でレイヤーを表示して目で確認してください。</p>';
+    return;
+  }
+  const rows = out.map(({o, err, frac, worst, center}) => {
+    let v, cls, d = '';
+    if (err) { v = '取得できず'; cls = 'warn'; }
+    else if (!frac && !center) { v = 'かからない'; cls = 'ok'; }
+    else {
+      const pct = Math.round(frac * 100);
+      v = pct >= 95 ? 'ほぼ全域' : pct ? `約${pct}%` : '一部';
+      cls = 'bad';
+      d = [worst ? `最大 ${worst.label}` : '', center ? `最有力地点：${center.label}` : '最有力地点：かからない'].filter(Boolean).join('／');
+    }
+    return `<div class="hzrow"><span>${esc(o.name)}</span><span class="v ${cls}">${v}</span>${d?`<span class="d">${esc(d)}</span>`:''}</div>`;
+  }).join('');
+  const urb = urbanCheck(pts, top);
+  const [la, ln] = top.map(v => v.toFixed(6));
+  box.innerHTML = `<h2 style="margin:0">候補エリア（上位50%）のハザード</h2>
+    <div>${rows}${urb}</div>
+    <p class="hint">地震の確率と揺れやすさは「重ねる情報」で地図に表示して確認してください（色の判定に対応していません）。</p>
+    <div class="row" style="font-size:13px">
+      <a href="https://disaportal.gsi.go.jp/maps/?ll=${la},${ln}&z=16&base=pale" target="_blank" rel="noopener">重ねるハザードマップ</a>
+      <a href="https://www.j-shis.bosai.go.jp/map/" target="_blank" rel="noopener">J-SHIS Map</a>
+      <span id="cityLink"></span>
+    </div>`;
+  cityLinks(top);
+}
+async function cityLinks(ll){
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&accept-language=ja&zoom=10&lat=${ll[0]}&lon=${ll[1]}`);
+    const j = await r.json(); const a = j.address || {};
+    const city = a.city || a.town || a.village || a.county || a.state || '';
+    const ward = a.city_district || '';
+    const name = (city + (ward && !city.endsWith(ward) ? ward : '')).trim();
+    if (!name) return;
+    const q = encodeURIComponent(`${name} 都市計画図 インターネット`);
+    const el = $('#cityLink'); if (el) el.innerHTML = `<a href="https://www.google.com/search?q=${q}" target="_blank" rel="noopener">${esc(name)}の都市計画図を探す</a>`;
+  } catch(e) {}
+}
+
+/* ---------- urban planning files ---------- */
+let upLayers = [];   // {name, color, layer, geo}
+const UPCOL = ['#e0007a','#7a3cff','#0077b6','#c75b00'];
+function lineSegs(g, out){
+  if (!g) return;
+  const t = g.type, c = g.coordinates;
+  const add = arr => { for (let i = 1; i < arr.length; i++) out.push([arr[i-1], arr[i]]); };
+  if (t === 'LineString') add(c);
+  else if (t === 'MultiLineString' || t === 'Polygon') c.forEach(add);
+  else if (t === 'MultiPolygon') c.forEach(p => p.forEach(add));
+  else if (t === 'GeometryCollection') g.geometries.forEach(x => lineSegs(x, out));
+}
+function featName(p){
+  if (!p) return '';
+  const vals = Object.values(p).filter(v => typeof v === 'string');
+  return vals.find(v => /線|号|道路|通り|街路/.test(v)) || vals.find(v => /[一-龯]/.test(v)) || '';
+}
+function urbanCheck(pts, top){
+  const roads = upLayers.filter(u => u.lines);
+  if (!roads.length) return `<div class="hzrow"><span>都市計画道路</span><span class="v warn">未確認</span><span class="d">下の「都市計画道路」でファイルを読み込むと判定します。</span></div>`;
+  const lat0 = top[0], mLat = 111320, mLng = 111320 * Math.cos(lat0*Math.PI/180);
+  const xy = (lng, lat) => [(lng - top[1]) * mLng, (lat - top[0]) * mLat];
+  const P = pts.map(p => xy(p[1], p[0]));
+  const cell = lastGrid.cell;
+  let minD = Infinity, nearName = '', crossing = new Set();
+  for (const u of roads) for (const f of u.geo.features) {
+    const segs = []; lineSegs(f.geometry, segs);
+    const nm = featName(f.properties);
+    for (const [a, b] of segs) {
+      const A = xy(a[0], a[1]), B = xy(b[0], b[1]);
+      const d0 = segDist([0,0], A, B);
+      if (d0 < minD) { minD = d0; nearName = nm; }
+      if (d0 > 3000) continue;
+      for (const q of P) if (segDist(q, A, B) < cell * 1.2) { crossing.add(nm || '名称不明'); break; }
+    }
+  }
+  if (crossing.size) return `<div class="hzrow"><span>都市計画道路</span><span class="v bad">候補内を通る</span><span class="d">${esc([...crossing].slice(0,4).join('、'))}。最有力地点から約${Math.round(minD)}m</span></div>`;
+  if (minD < Infinity) return `<div class="hzrow"><span>都市計画道路</span><span class="v ok">候補内は通らない</span><span class="d">最寄りは約${Math.round(minD)}m${nearName?`（${esc(nearName)}）`:''}</span></div>`;
+  return `<div class="hzrow"><span>都市計画道路</span><span class="v warn">データ範囲外</span><span class="d">読み込んだファイルにこの付近のデータがありません。</span></div>`;
+}
+function segDist(p, a, b){
+  const dx = b[0]-a[0], dy = b[1]-a[1], L2 = dx*dx + dy*dy;
+  let t = L2 ? ((p[0]-a[0])*dx + (p[1]-a[1])*dy) / L2 : 0; t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p[0] - (a[0] + t*dx), p[1] - (a[1] + t*dy));
+}
+function geomBBox(g){
+  let a = [Infinity, Infinity, -Infinity, -Infinity];
+  const walk = c => { if (typeof c[0] === 'number') { a[0]=Math.min(a[0],c[0]); a[1]=Math.min(a[1],c[1]); a[2]=Math.max(a[2],c[0]); a[3]=Math.max(a[3],c[1]); } else c.forEach(walk); };
+  if (g && g.coordinates) walk(g.coordinates);
+  else if (g && g.geometries) g.geometries.forEach(x => { const b = geomBBox(x); a=[Math.min(a[0],b[0]),Math.min(a[1],b[1]),Math.max(a[2],b[2]),Math.max(a[3],b[3])]; });
+  return a;
+}
+function areaOfInterest(){
+  let b = null;
+  const ext = bb => { b = b ? b.extend(bb) : L.latLngBounds(bb.getSouthWest(), bb.getNorthEast()); };
+  if (state.area) ext(areaBounds().pad(0.5));
+  for (const p of state.points) for (const [la, ln] of locsOf(p)) ext(L.latLng(la, ln).toBounds((road(p).hi + 3000) * 2));
+  return b || map.getBounds().pad(1);
+}
+function addUrban(geo, name, persist = true){
+  if (!geo || !Array.isArray(geo.features)) throw new Error('GeoJSONではありません');
+  const b = areaOfInterest();
+  const feats = geo.features.filter(f => {
+    if (!f.geometry) return false;
+    const bb = geomBBox(f.geometry);
+    return bb[2] >= b.getWest() && bb[0] <= b.getEast() && bb[3] >= b.getSouth() && bb[1] <= b.getNorth();
+  });
+  const fc = {type:'FeatureCollection', features:feats};
+  const lines = feats.some(f => /LineString/.test(f.geometry.type));
+  const color = UPCOL[upLayers.length % UPCOL.length];
+  const layer = L.geoJSON(fc, {
+    pane:'urban',
+    style: f => /LineString/.test(f.geometry.type) ? {color, weight:5, opacity:.85} : {color, weight:1.5, fillOpacity:.12},
+    pointToLayer: (f, ll) => L.circleMarker(ll, {radius:5, color, pane:'urban'}),
+    onEachFeature: (f, l) => {
+      const p = f.properties || {};
+      const rows = Object.entries(p).filter(([k,v]) => v !== null && v !== '').slice(0, 20)
+        .map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('');
+      const isPoly = /Polygon/.test(f.geometry.type);
+      const label = p.S_NAME ? `${p.CITY_NAME || ''}${p.S_NAME}` : (featName(p) || name);
+      l.bindPopup(`<div class="pop"><b>${esc(label)}</b><table>${rows}</table>${isPoly ? '<button class="useArea" style="margin-top:6px">この範囲を基準の住所にする</button>' : ''}</div>`, {maxWidth:320});
+      if (isPoly) l.on('popupopen', e => {
+        const b = e.popup.getElement().querySelector('.useArea');
+        if (b) b.onclick = () => { map.closePopup(); setArea({name: label, geo: f.geometry, src: p.S_NAME ? '国勢調査 小地域境界' : name}); };
+      });
+    }
+  }).addTo(map);
+  upLayers.push({name, color, layer, geo:fc, lines});
+  if (persist) saveUrban();
+  renderUpList(); renderLegend();
+  return feats.length;
+}
+function saveUrban(){
+  try { localStorage.setItem(UPKEY, JSON.stringify(upLayers.map(u => ({name:u.name, geo:u.geo})))); }
+  catch(e) { $('#upStatus').textContent = 'データが大きいため、次回開いたときには読み込み直しが必要です。'; }
+}
+function renderUpList(){
+  $('#upList').innerHTML = upLayers.map((u, i) => `<li><span class="dot" style="--c:${u.color};width:14px;height:14px"></span>${esc(u.name)}<span class="num" style="color:var(--muted)">${u.geo.features.length}件</span><button class="ghost" data-i="${i}" style="padding:2px 8px">外す</button></li>`).join('');
+}
+$('#upList').addEventListener('click', e => {
+  const i = e.target.dataset.i; if (i === undefined) return;
+  map.removeLayer(upLayers[i].layer); upLayers.splice(+i, 1); saveUrban(); renderUpList(); renderLegend();
+  if (!$('#hz').hidden) checkHazards();
+});
+function loadScript(src){
+  return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('ライブラリを読み込めませんでした')); document.head.appendChild(s); });
+}
+let zipObj = null;
+$('#upFile').addEventListener('change', async e => {
+  const f = e.target.files[0]; if (!f) return;
+  const st = $('#upStatus'); st.textContent = '読み込み中…';
+  try {
+    if (/\.zip$/i.test(f.name)) {
+      if (!window.JSZip) await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js');
+      zipObj = await JSZip.loadAsync(f);
+      const files = Object.values(zipObj.files).filter(z => !z.dir && /\.(geojson|json|shp)$/i.test(z.name) && !/__MACOSX/.test(z.name));
+      // inner zips (per municipality) — list too
+      const inner = Object.values(zipObj.files).filter(z => !z.dir && /\.zip$/i.test(z.name));
+      if (!files.length && !inner.length) throw new Error('ZIPの中にGeoJSON・Shapefileが見つかりません');
+      const sorted = [...files, ...inner].sort((a, b) => (/道路|douro|road|街路/i.test(b.name) - /道路|douro|road|街路/i.test(a.name)) || a.name.localeCompare(b.name));
+      const box = $('#zipPick'); box.hidden = false;
+      box.innerHTML = `<div class="hint">読み込むファイルを選んでください（名前に「道路」を含むものを上に並べています）</div>` +
+        sorted.map((z, i) => `<label class="ov" style="font-size:13px"><input type="checkbox" id="zp-${i}" value="${esc(z.name)}"${i===0 && /道路|douro|road|街路/i.test(z.name)?' checked':''}><span>${esc(z.name)}</span></label>`).join('') +
+        `<div class="row"><button class="primary" id="zipLoad">選んだファイルを読み込む</button></div>`;
+      $('#zipLoad').onclick = loadFromZip;
+      st.textContent = '';
+    } else {
+      const geo = JSON.parse(await f.text());
+      const n = addUrban(geo, f.name.replace(/\.(geo)?json$/i, ''));
+      st.textContent = `${n}件を表示しました（地点の周辺だけ残しています）。`;
+      if (!$('#hz').hidden) checkHazards();
+    }
+  } catch(err) { st.innerHTML = `<span class="warn">${esc(err.message || '読み込めませんでした')}</span>`; }
+  e.target.value = '';
+});
+async function readShp(zip, shpName){
+  if (!window.shp) await loadScript('https://unpkg.com/shpjs@4.0.4/dist/shp.min.js');
+  const stem = shpName.replace(/\.shp$/i, '');
+  const find = ext => zip.file(new RegExp('^' + stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\.' + ext + '$', 'i'))[0];
+  const shpBuf = await zip.file(shpName).async('arraybuffer');
+  const prj = find('prj'), dbf = find('dbf'), cpgF = find('cpg');
+  const geoms = shp.parseShp(shpBuf, prj ? await prj.async('string') : undefined);
+  if (!dbf) return {type:'FeatureCollection', features: geoms.map(g => ({type:'Feature', geometry:g, properties:{}}))};
+  const dbfBuf = await dbf.async('arraybuffer');
+  let cpg = cpgF ? (await cpgF.async('string')).trim() : null;
+  if (!cpg) { try { new TextDecoder('utf-8', {fatal:true}).decode(new Uint8Array(dbfBuf)); cpg = 'utf-8'; } catch(e) { cpg = 'shift_jis'; } }
+  if (/^(932|sjis|cp932)$/i.test(cpg)) cpg = 'shift_jis';
+  const props = shp.parseDbf(dbfBuf, cpg);
+  return shp.combine([geoms, props]);
+}
+async function loadFromZip(){
+  const st = $('#upStatus');
+  const picks = [...document.querySelectorAll('#zipPick input:checked')].map(i => i.value);
+  if (!picks.length) { st.textContent = 'ファイルを選んでください。'; return; }
+  let total = 0;
+  for (const name of picks) {
+    st.textContent = `${name} を読み込み中…`;
+    try {
+      let zip = zipObj, targets = [name];
+      if (/\.zip$/i.test(name)) {
+        zip = await JSZip.loadAsync(await zipObj.file(name).async('arraybuffer'));
+        targets = Object.keys(zip.files).filter(n => /\.(geojson|json|shp)$/i.test(n) && /道路|douro|road|街路/i.test(n));
+        if (!targets.length) targets = Object.keys(zip.files).filter(n => /\.(geojson|shp)$/i.test(n));
+      }
+      for (const t of targets) {
+        const geo = /\.shp$/i.test(t) ? await readShp(zip, t) : JSON.parse(await zip.file(t).async('string'));
+        total += addUrban(geo, t.split('/').pop().replace(/\.(geojson|json|shp)$/i, ''));
+      }
+    } catch(err) { st.innerHTML = `<span class="warn">${esc(name)}：${esc(err.message || '読み込めませんでした')}</span>`; return; }
+  }
+  $('#zipPick').hidden = true; zipObj = null;
+  st.textContent = total ? `${total}件を表示しました（地点の周辺だけ残しています）。` : '地点の周辺にデータがありませんでした。都道府県が合っているか確認してください。';
+  if (!$('#hz').hidden) checkHazards();
+}
+let addUrbanLater = [];
+try { addUrbanLater = JSON.parse(localStorage.getItem(UPKEY) || '[]'); } catch(e) {}
+
+/* ---------- distance model ---------- */
+function road(p){
+  if (p.mode === 'walk') return {lo: Math.max(0, (p.value - 1) * WALK), hi: p.value * WALK};
+  return {lo: p.value * 0.97, hi: p.value * 1.03};
+}
+const mid = r => r.lo > 0 ? (r.lo + r.hi) / 2 : r.hi * 0.6;
+const active = () => state.points.filter(p => p.on && p.value > 0);
+const fmtM = m => m >= 1000 ? (m/1000).toFixed(2) + 'km' : Math.round(m) + 'm';
+const sigmaFor = m => 0.13 + 35 / Math.max(m, 60);
+
+function pinIcon(i, color){
+  return L.divIcon({className:'', html:`<div class="pin" style="--c:${color}"><span>${i+1}</span></div>`, iconSize:[26,26], iconAnchor:[13,30]});
+}
+
+const locsOf = p => (p.alts && p.alts.length > 1) ? p.alts : [[p.lat, p.lng]];
+function drawPoints(){
+  pointLayers.forEach(l => map.removeLayer(l)); pointLayers = [];
+  state.points.forEach((p, i) => {
+    const color = COLORS[i % COLORS.length];
+    const r = road(p);
+    const opt = {color, weight:2, fill:false, opacity:p.on?0.9:0.3, interactive:false};
+    if (p.alts && p.alts.length > 1) {
+      p.alts.forEach((a, ai) => {
+        const outer = L.circle(a, {...opt, radius:r.hi + state.slack, weight:1, opacity:p.on?0.45:0.2, dashArray:'4 6'}).addTo(map);
+        const mk = L.marker(a, {icon:pinIcon(i,color), title:p.name, opacity:0.85}).addTo(map);
+        mk.bindTooltip(`${esc(p.name)}（候補${ai+1}/${p.alts.length}）<br>クリックでこの候補を外す`, {direction:'top', offset:[0,-28]});
+        mk.on('click', ev => {
+          L.DomEvent.stop(ev);
+          p.alts.splice(ai, 1);
+          if (p.alts.length === 1) { [p.lat, p.lng] = p.alts[0]; delete p.alts; }
+          state.sample = false; save(); refresh();
+        });
+        pointLayers.push(outer, mk);
+      });
+      return;
+    }
+    const outer = L.circle([p.lat,p.lng], {...opt, radius:r.hi + state.slack, dashArray:'6 5'}).addTo(map);
+    const likely = L.circle([p.lat,p.lng], {...opt, radius:mid(r) / state.mu, weight:1.2, dashArray:'2 5'}).addTo(map);
+    const mk = L.marker([p.lat,p.lng], {icon:pinIcon(i,color), draggable:true, title:p.name}).addTo(map);
+    mk.bindTooltip(esc(p.name), {direction:'top', offset:[0,-28]});
+    mk.on('drag', e => { const ll = e.target.getLatLng(); outer.setLatLng(ll); likely.setLatLng(ll); });
+    mk.on('dragend', e => {
+      const ll = e.target.getLatLng(); p.lat = ll.lat; p.lng = ll.lng; p.auto = false;
+      save(); renderList(); compute();
+    });
+    pointLayers.push(outer, likely, mk);
+  });
+}
+
+/* ---------- likelihood grid ---------- */
+function compute(){
+  gridLayers.forEach(l => map.removeLayer(l)); gridLayers = [];
+  centerMarkers.forEach(l => map.removeLayer(l)); centerMarkers = [];
+  lastGrid = null; lastRegions = [];
+  $('#hz').hidden = true;
+  const pts = active();
+  const res = $('#result');
+  if (!pts.length && !state.area) {
+    res.innerHTML = `<div class="big">地点を追加してください</div><p class="hint">基準の住所を入れ、物件情報の「交通」欄を貼り付けるか、駅名で検索して追加します。</p>`;
+    renderCheck(); return;
+  }
+  let lat0, lng0;
+  if (state.area) { const c = areaBounds().getCenter(); lat0 = c.lat; lng0 = c.lng; }
+  else { lat0 = pts.reduce((s,p)=>s+p.lat,0)/pts.length; lng0 = pts.reduce((s,p)=>s+p.lng,0)/pts.length; }
+  const mLat = 111320, mLng = 111320 * Math.cos(lat0*Math.PI/180);
+  const toLL = (x,y) => [lat0 + y/mLat, lng0 + x/mLng];
+  const toXY = (lat,lng) => [(lng-lng0)*mLng, (lat-lat0)*mLat];
+  const slack = state.slack, lmu = Math.log(state.mu);
+  const C = pts.map(p => {
+    const r = road(p), m = mid(r);
+    const alts = locsOf(p).map(([la, ln]) => { const [x, y] = toXY(la, ln); return {x, y}; });
+    return {alts, hi:r.hi + slack, hi2:(r.hi + slack)**2, m, sig:sigmaFor(m)};
+  });
+
+  let x0=-Infinity, x1=Infinity, y0=-Infinity, y1=Infinity;
+  for (const c of C) {
+    let a0=Infinity, a1=-Infinity, b0=Infinity, b1=-Infinity;
+    for (const a of c.alts) { a0=Math.min(a0,a.x-c.hi); a1=Math.max(a1,a.x+c.hi); b0=Math.min(b0,a.y-c.hi); b1=Math.max(b1,a.y+c.hi); }
+    x0=Math.max(x0,a0); x1=Math.min(x1,a1); y0=Math.max(y0,b0); y1=Math.min(y1,b1);
+  }
+  if (state.area) {
+    const ab = areaBounds(); const [ax0, ay0] = toXY(ab.getSouth(), ab.getWest()), [ax1, ay1] = toXY(ab.getNorth(), ab.getEast());
+    x0=Math.max(x0,ax0); x1=Math.min(x1,ax1); y0=Math.max(y0,ay0); y1=Math.min(y1,ay1);
+  }
+  if (!(x1 > x0 && y1 > y0)) return noOverlap(res);
+
+  const N = 280;
+  const cell = Math.max(2, Math.max(x1-x0, y1-y0) / N);
+  const nx = Math.max(1, Math.ceil((x1-x0)/cell)), ny = Math.max(1, Math.ceil((y1-y0)/cell));
+  const mask = state.area ? areaMask(nx, ny, cell, x0, y1, toXY) : null;
+  const logL = new Float64Array(nx*ny).fill(-Infinity);
+  let maxL = -Infinity, best = -1;
+  for (let j = 0; j < ny; j++) {
+    const y = y1 - (j+0.5)*cell;
+    for (let i = 0; i < nx; i++) {
+      const k = j*nx + i;
+      if (mask && !mask[k]) continue;
+      const x = x0 + (i+0.5)*cell;
+      let Lk = 0, ok = true;
+      for (const c of C) {
+        let bestZ = Infinity;
+        for (const a of c.alts) {
+          const dd = (x-a.x)**2 + (y-a.y)**2;
+          if (dd > c.hi2) continue;
+          const d = Math.sqrt(dd);
+          const rhoLo = Math.log(c.m / (d + slack));
+          const rhoHi = Math.log(c.m / Math.max(d - slack, 15));
+          let z = 0;
+          if (lmu < rhoLo) z = (rhoLo - lmu) / c.sig; else if (lmu > rhoHi) z = (lmu - rhoHi) / c.sig;
+          if (z*z < bestZ) bestZ = z*z;
+        }
+        if (bestZ === Infinity) { ok = false; break; }
+        Lk -= bestZ/2;
+      }
+      if (!ok) continue;
+      logL[k] = Lk;
+      if (Lk > maxL) { maxL = Lk; best = k; }
+    }
+  }
+  if (best < 0) return noOverlap(res);
+  if (!C.length) return areaOnly(res, logL, nx, ny, cell, x0, y1, toXY, toLL);
+
+  const w = new Float64Array(nx*ny); let tot = 0; const idx = [];
+  for (let k = 0; k < w.length; k++) if (logL[k] > -Infinity) { w[k] = Math.exp(logL[k] - maxL); tot += w[k]; idx.push(k); }
+  idx.sort((a,b) => w[b] - w[a]);
+  const level = new Uint8Array(nx*ny);
+  let acc = 0;
+  for (const k of idx) { acc += w[k]; level[k] = acc <= tot*0.5 ? 3 : acc <= tot*0.9 ? 2 : 1; }
+  level[best] = 3;
+
+  const cv = document.createElement('canvas'); cv.width = nx; cv.height = ny;
+  const ctx = cv.getContext('2d'); const img = ctx.createImageData(nx, ny); const D = img.data;
+  let n50=0, n90=0;
+  const line = state.gridMode === 'line';
+  const fillPaint = {1:[22,128,100,38], 2:[22,128,100,95], 3:[12,100,78,175]};
+  const linePaint = {1:[22,128,100,110], 2:[22,128,100,200], 3:[8,80,62,255]};
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    const k = j*nx + i, lv = level[k]; if (!lv) continue;
+    if (lv === 3) n50++; if (lv >= 2) n90++;
+    let col = null;
+    if (!line) col = fillPaint[lv];
+    else {
+      // edge if any neighbour has a lower level
+      const nb = (a, b) => (a<0||b<0||a>=nx||b>=ny) ? 0 : level[b*nx+a];
+      const mn = Math.min(nb(i+1,j), nb(i-1,j), nb(i,j+1), nb(i,j-1));
+      if (mn < lv) col = linePaint[lv];
+    }
+    if (col) { const o = k*4; D[o]=col[0]; D[o+1]=col[1]; D[o+2]=col[2]; D[o+3]=col[3]; }
+  }
+  ctx.putImageData(img, 0, 0);
+  gridLayers.push(L.imageOverlay(cv.toDataURL(), [toLL(x0, y1-ny*cell), toLL(x0+nx*cell, y1)], {pane:'grid', interactive:false, className: line ? 'gridpx' : ''}).addTo(map));
+  lastGrid = {nx, ny, cell, x0, y1, level, toXY, toLL};
+
+  const regions = components(level, nx, ny, cell, x0, y1, w).slice(0, 3);
+  lastRegions = regions;
+  const letters = 'ABC';
+  regions.forEach((r, i) => {
+    r.ll = toLL(r.px, r.py);
+    const lbl = regions.length > 1 ? `候補${letters[i]}` : '最有力';
+    centerMarkers.push(L.marker(r.ll, {icon:L.divIcon({className:'', html:`<span class="ctr">${lbl}</span>`, iconSize:null, iconAnchor:[24,10]}), interactive:false, keyboard:false}).addTo(map));
+  });
+  const area = a => a >= 10000 ? `約${(a/10000).toFixed(1)}ha` : `約${(Math.round(a/100)*100).toLocaleString()}m²`;
+  const items = regions.map((r, i) => {
+    const [la, ln] = r.ll.map(v => v.toFixed(5));
+    const tag = regions.length > 1 ? letters[i] : '◎';
+    return `<li><span class="tag">${tag}</span><span class="num">${la}, ${ln}</span><span>東西${fmtM(r.w)}×南北${fmtM(r.h)}</span>
+      <a href="https://www.google.com/maps?q=${la},${ln}" target="_blank" rel="noopener">Googleマップ</a>
+      <a href="https://maps.gsi.go.jp/#17/${la}/${ln}/" target="_blank" rel="noopener">地理院地図</a></li>`;
+  }).join('');
+  let hint = '';
+  if (C.length === 1) hint = '地点を増やすと絞り込めます。';
+  else if (C.length === 2) hint = '2地点だと候補が2か所に分かれがちです。小学校・スーパーなど3地点目を足すと絞れます。';
+  else if (regions.length > 1) hint = '有力候補が分かれています。間取り図の方角や写真の景色で見分けられることがあります。';
+  res.innerHTML = `<div class="big">上位50%の範囲 ${area(n50*cell*cell)}</div>
+    <div class="meta">${C.length}地点で計算／上位90%の範囲 ${area(n90*cell*cell)}</div>
+    <div class="legendrow"><span><i style="background:rgba(12,100,78,.7)"></i>上位50%</span><span><i style="background:rgba(22,128,100,.38)"></i>上位90%</span><span><i style="background:rgba(22,128,100,.15)"></i>ありうる範囲</span></div>
+    <ul class="regions">${items}</ul>
+    <div class="row"><button id="zoomBtn">候補にズーム</button><button class="primary" id="hzBtn">ハザードを確認</button></div>
+    ${hint?`<p class="hint">${hint}</p>`:''}`;
+  $('#zoomBtn').onclick = () => {
+    const b = L.latLngBounds([toLL(x0, y1-ny*cell), toLL(x0+nx*cell, y1)]);
+    const zb = L.latLngBounds(regions.map(r => r.ll));
+    map.fitBounds(regions.length && n90*cell*cell < 4e5 ? zb.pad(1.5).extend(regions[0].ll) : b, {maxZoom:17});
+  };
+  $('#hzBtn').onclick = checkHazards;
+  renderCheck();
+}
+
+function noOverlap(res){
+  res.innerHTML = `<div class="big warn">${state.area ? '基準の住所と地点の条件が重なりません' : 'すべての地点の範囲が重なりません'}</div>
+    <p class="hint">どの地点からも「道のり＋位置ずれ」より遠くには物件はないはずなので、どれかのピンが別の場所（同名の別の駅・施設）に置かれている可能性が高いです。ピンの位置を確認するか、「起点の位置ずれ」を広げてください。${state.area ? '基準の住所が正しいか（隣の町名と取り違えていないか）も確認してください。' : ''}</p>`;
+  renderCheck();
+}
+
+function areaOnly(res, logL, nx, ny, cell, x0, y1, toXY, toLL){
+  const level = new Uint8Array(nx*ny);
+  let n = 0, sx = 0, sy = 0;
+  for (let k = 0; k < level.length; k++) if (logL[k] > -Infinity) {
+    level[k] = 3; n++; sx += x0 + ((k % nx) + 0.5)*cell; sy += y1 - (((k / nx) | 0) + 0.5)*cell;
+  }
+  lastGrid = {nx, ny, cell, x0, y1, level, toXY, toLL};
+  lastRegions = [{ll: toLL(sx/n, sy/n)}];
+  const a = n*cell*cell;
+  res.innerHTML = `<div class="big">基準の住所 ${a >= 10000 ? `約${(a/10000).toFixed(1)}ha` : `約${(Math.round(a/100)*100).toLocaleString()}m²`}</div>
+    <div class="meta">${esc(state.area.name)}（${esc(state.area.src)}）</div>
+    <p class="hint">目印からの距離や徒歩分数を追加すると、この中で絞り込みます。</p>
+    <div class="row"><button class="primary" id="hzBtn">この範囲のハザードを確認</button></div>`;
+  $('#hzBtn').onclick = checkHazards;
+  renderCheck();
+}
+
+/* ---------- base area (address boundary) ---------- */
+let areaLayer = null, maskLayer = null, drawing = null;
+const PREF_RE = /^(北海道|東京都|京都府|大阪府|[^都道府県]{2,3}県)/;
+const polysOf = g => !g ? [] : g.type === 'Polygon' ? [g.coordinates] : g.type === 'MultiPolygon' ? g.coordinates : [];
+function areaBounds(){
+  const b = L.latLngBounds([]);
+  for (const poly of polysOf(state.area.geo)) for (const [ln, la] of poly[0]) b.extend([la, ln]);
+  return b;
+}
+function areaMask(nx, ny, cell, x0, y1, toXY){
+  const c = document.createElement('canvas'); c.width = nx; c.height = ny;
+  const ctx = c.getContext('2d', {willReadFrequently:true});
+  ctx.beginPath();
+  for (const poly of polysOf(state.area.geo)) for (const ring of poly) {
+    ring.forEach(([ln, la], i) => { const [x, y] = toXY(la, ln); const px = (x - x0)/cell, py = (y1 - y)/cell; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+    ctx.closePath();
+  }
+  ctx.fillStyle = '#000'; ctx.fill('evenodd');
+  const d = ctx.getImageData(0, 0, nx, ny).data, m = new Uint8Array(nx*ny);
+  for (let k = 0; k < m.length; k++) m[k] = d[k*4+3] > 100 ? 1 : 0;
+  return m;
+}
+function drawArea(){
+  [areaLayer, maskLayer].forEach(l => l && map.removeLayer(l)); areaLayer = maskLayer = null;
+  $('#areaClear').hidden = !state.area;
+  if (!state.area) return;
+  const holes = [];
+  for (const poly of polysOf(state.area.geo)) holes.push(poly[0].map(([ln, la]) => [la, ln]));
+  maskLayer = L.polygon([[[89,-179],[89,179],[-89,179],[-89,-179]], ...holes], {pane:'mask', stroke:false, fillColor:'#26302c', fillOpacity:0.22, interactive:false}).addTo(map);
+  areaLayer = L.geoJSON({type:'Feature', geometry:state.area.geo}, {pane:'mask', style:{color:'#26302c', weight:2.5, dashArray:'8 4 2 4', fill:false}, interactive:false}).addTo(map);
+}
+function setArea(a){
+  if (state.sample) { state.points = []; state.truth = null; drawTruth(); }
+  state.area = a; state.sample = false;
+  save(); drawArea(); refresh();
+  $('#areaQ').value = a.name.replace(/（全丁目）$/, '');
+  $('#areaStatus').innerHTML = `<span class="ok">${esc(a.name)}</span> の範囲内で推定します（境界：${esc(a.src)}）。`;
+  map.fitBounds(areaBounds(), {padding:[30, 30], maxZoom:17});
+}
+const KNUM = {'一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'十':10};
+function kanjiNum(k){ if (k.length === 1) return KNUM[k]; if (k[0] === '十') return 10 + (KNUM[k[1]]||0); return KNUM[k[0]]*10 + (KNUM[k[2]]||0); }
+function normAddr(s){
+  let q = z2h(s).replace(/\s+/g, '').replace(/[−－ー‐]/g, '-');
+  q = q.replace(/([一二三四五六七八九十]+)丁目/, (m, k) => kanjiNum(k) + '丁目');
+  return q.replace(/(?:\d+(?:番地?|号)?-?)+$/, '').replace(/大字/g, '');
+}
+async function fetchLOD(addr){
+  let r;
+  try { r = await fetch('https://uedayou.net/loa/' + encodeURIComponent(addr) + '.geojson'); } catch(e) { return {err:true}; }
+  if (!r.ok) return null;
+  try {
+    const j = await r.json();
+    const g = j.type === 'Feature' ? j.geometry : j.type === 'FeatureCollection' ? (j.features[0] || {}).geometry : j;
+    return g && /Polygon/.test(g.type) ? g : null;
+  } catch(e) { return null; }
+}
+async function resolveArea(input){
+  let q = normAddr(input);
+  if (!PREF_RE.test(q)) {
+    try {
+      const r = await fetch('https://msearch.gsi.go.jp/address-search/AddressSearch?q=' + encodeURIComponent(q));
+      const titles = (await r.json()).map(x => x.properties.title);
+      const hit = titles.find(t => t.endsWith(q)) || titles.find(t => t.includes(q));
+      if (hit) q = normAddr(hit);
+    } catch(e) {}
+  }
+  const g = await fetchLOD(q);
+  if (g && !g.err) return {name:q, geo:g, src:'住所LOD'};
+  const lodErr = g && g.err;
+  if (!lodErr && !/丁目$/.test(q)) {
+    const polys = [];
+    for (let i = 1; i <= 20; i++) {
+      const h = await fetchLOD(q + i + '丁目');
+      if (!h || h.err) { if (polys.length || i >= 2) break; continue; }
+      polys.push(...polysOf(h));
+    }
+    if (polys.length) return {name:q + '（全丁目）', geo:{type:'MultiPolygon', coordinates:polys}, src:'住所LOD'};
+  }
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&countrycodes=jp&accept-language=ja&polygon_geojson=1&polygon_threshold=0.00002&q=${encodeURIComponent(q)}`);
+    const hit = (await r.json()).find(x => x.geojson && /Polygon/.test(x.geojson.type) && x.class === 'boundary');
+    if (hit) return {name:q, geo:hit.geojson, src:'OpenStreetMap'};
+  } catch(e) {}
+  return {fail:true, name:q, lodErr};
+}
+$('#areaBtn').onclick = async () => {
+  const v = $('#areaQ').value.trim(); if (!v) { $('#areaQ').focus(); return; }
+  const btn = $('#areaBtn'), st = $('#areaStatus');
+  btn.disabled = true; st.textContent = `${v} の境界を探しています…`;
+  const a = await resolveArea(v);
+  btn.disabled = false;
+  if (a.fail) {
+    st.innerHTML = `<span class="warn">「${esc(a.name)}」の境界が見つかりませんでした。</span>町名の表記（「大字」「字」の有無、丁目）を変えて試すか、「地図に描く」で囲んでください。国勢調査の<a href="https://www.e-stat.go.jp/gis/statmap-search?page=1&type=2&aggregateUnitForBoundary=A&toukeiCode=00200521&toukeiYear=2020&serveyId=A002005212020&coordsys=1&format=shape&datum=2000" target="_blank" rel="noopener">小地域境界データ</a>（市区町村ごとのZIP）を下の「都市計画道路」欄から読み込み、町名をクリックして基準にすることもできます。`;
+    return;
+  }
+  setArea(a);
+};
+$('#areaQ').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) $('#areaBtn').click(); });
+$('#areaClear').onclick = () => { state.area = null; save(); drawArea(); refresh(); $('#areaStatus').textContent = '基準の住所を解除しました。'; };
+
+let drawLine = null;
+$('#areaDraw').onclick = () => {
+  if (!drawing) {
+    picking = truthPicking = false; updatePickUI();
+    drawing = []; $('#areaDraw').textContent = '描き終える';
+    $('#map').classList.add('picking');
+    $('#areaStatus').textContent = '地図をタップして、物件がありそうな範囲の角を順に置いてください。3点以上で「描き終える」。';
+    return;
+  }
+  const pts = drawing; drawing = null;
+  if (drawLine) { map.removeLayer(drawLine); drawLine = null; }
+  $('#areaDraw').textContent = '地図に描く'; $('#map').classList.remove('picking');
+  if (pts.length < 3) { $('#areaStatus').textContent = '3点以上必要です。もう一度「地図に描く」から始めてください。'; return; }
+  const ring = pts.map(([la, ln]) => [ln, la]); ring.push(ring[0]);
+  setArea({name:'手で描いた範囲', geo:{type:'Polygon', coordinates:[ring]}, src:'手描き'});
+};
+map.on('click', e => {
+  if (!drawing) return;
+  drawing.push([e.latlng.lat, e.latlng.lng]);
+  if (drawLine) map.removeLayer(drawLine);
+  drawLine = L.polygon(drawing, {color:'#26302c', weight:2, dashArray:'4 4', fillOpacity:0.08, interactive:false}).addTo(map);
+});
+
+/* ---------- landmark search near the base area ---------- */
+const CHAINS = [
+  ['セブン-?イレブン|セブンイレブン|ｾﾌﾞﾝ', 'セブン'], ['ファミリーマート|ファミマ', 'ファミリーマート'], ['ローソン', 'ローソン'],
+  ['ミニストップ', 'ミニストップ'], ['デイリーヤマザキ', 'デイリーヤマザキ'], ['セイコーマート', 'セイコーマート'], ['ニューデイズ|NewDays', 'NewDays'],
+  ['ヤオコー', 'ヤオコー'], ['イオン', 'イオン'], ['マルエツ', 'マルエツ'], ['ベルク', 'ベルク'], ['ライフ', 'ライフ'], ['西友', '西友'],
+  ['ウエルシア', 'ウエルシア'], ['マツモトキヨシ|マツキヨ', 'マツモトキヨシ'], ['ツルハ', 'ツルハ'], ['スギ薬局', 'スギ'], ['サンドラッグ', 'サンドラッグ'], ['クリエイト', 'クリエイト'],
+  ['カインズ', 'カインズ'], ['業務スーパー', '業務スーパー'], ['しまむら', 'しまむら'], ['マクドナルド', 'マクドナルド']
+];
+const CATS = [
+  [/^(コンビニ|コンビニエンスストア)$/, '["shop"="convenience"]'],
+  [/^(スーパー|スーパーマーケット)$/, '["shop"="supermarket"]'],
+  [/^ドラッグストア$/, '["shop"="chemist"]'],
+  [/^小学校$/, '["amenity"="school"]["name"~"小学校"]'],
+  [/^中学校$/, '["amenity"="school"]["name"~"中学校"]'],
+  [/^幼稚園$/, '["amenity"="kindergarten"]["name"~"幼稚園"]'],
+  [/^(保育園|保育所)$/, '["amenity"~"kindergarten|childcare"]["name"~"保育"]'],
+  [/^郵便局$/, '["amenity"="post_office"]'],
+  [/^(公園|児童公園)$/, '["leisure"="park"]'],
+  [/^(病院|クリニック|医院)$/, '["amenity"~"hospital|clinic|doctors"]'],
+  [/^銀行$/, '["amenity"="bank"]'],
+  [/^(駅)$/, '["railway"="station"]'],
+  [/^(交番)$/, '["amenity"="police"]']
+];
+const rxEsc = s => s.replace(/[.*+?^${}()|[\]\\"]/g, '\\$&');
+async function overpass(filter, b){
+  const q = `[out:json][timeout:20];nwr${filter}(${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()});out center 60;`;
+  const r = await fetch('https://overpass-api.de/api/interpreter', {method:'POST', body:'data=' + encodeURIComponent(q), headers:{'Content-Type':'application/x-www-form-urlencoded'}});
+  if (!r.ok) throw new Error('overpass');
+  const j = await r.json();
+  const out = [];
+  for (const e of j.elements) {
+    const lat = e.lat ?? e.center?.lat, lng = e.lon ?? e.center?.lon; if (lat == null) continue;
+    if (out.some(o => haversine([o.lat, o.lng], [lat, lng]) < 40)) continue;
+    out.push({lat, lng, label: e.tags?.name || e.tags?.brand || ''});
+  }
+  return out;
+}
+// returns {list:[{lat,lng,label}], multi:boolean}
+async function findLandmark(name, maxDist){
+  if (!state.area) return {list: await geocode(name), multi:false};
+  const b = areaBounds(); const pad = (maxDist || 1500) + 400;
+  const bb = L.latLngBounds(L.latLng(b.getSouth(), b.getWest()).toBounds(pad*2).getSouthWest(), L.latLng(b.getNorth(), b.getEast()).toBounds(pad*2).getNorthEast());
+  const nm = name.replace(/\s+/g, '');
+  try {
+    const cat = CATS.find(([re]) => re.test(nm));
+    if (cat) { const l = await overpass(cat[1], bb); if (l.length) return {list:l, multi:true}; }
+    const chain = CHAINS.find(([re]) => new RegExp(re).test(nm));
+    if (chain) {
+      const l = await overpass(`["name"~"${chain[1]}"]`, bb);
+      if (l.length) {
+        const branch = nm.replace(new RegExp(chain[0]), '').replace(/店$/, '').replace(/^[\s・-]+/, '');
+        if (branch.length >= 2) { const one = l.filter(x => x.label.replace(/\s|-/g, '').includes(branch)); if (one.length === 1) return {list:one, multi:false}; }
+        return {list:l, multi:true};
+      }
+    }
+    const flex = [...nm].map(rxEsc).join('[ 　・-]*');
+    const l = await overpass(`["name"~"${flex}"]`, bb);
+    if (l.length) return {list:l, multi:l.length > 1};
+  } catch(e) {}
+  const g = await geocode(name);
+  const near = g.filter(x => bb.contains([x.lat, x.lng]));
+  return {list: near.length ? near : g, multi:false};
+}
+
+function components(level, nx, ny, cell, x0, y1, w){
+  const seen = new Uint8Array(nx*ny); const out = [];
+  for (let s = 0; s < nx*ny; s++) {
+    if (level[s] !== 3 || seen[s]) continue;
+    const stack = [s]; seen[s] = 1;
+    let c=0, mnx=Infinity, mxx=-Infinity, mny=Infinity, mxy=-Infinity, bw=-1, px=0, py=0;
+    while (stack.length) {
+      const k = stack.pop(); const i = k % nx, j = (k / nx) | 0;
+      const x = x0 + (i+0.5)*cell, y = y1 - (j+0.5)*cell;
+      c++; mnx=Math.min(mnx,x); mxx=Math.max(mxx,x); mny=Math.min(mny,y); mxy=Math.max(mxy,y);
+      if (w[k] > bw) { bw = w[k]; px = x; py = y; }
+      for (const [di,dj] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+        const a = i+di, b = j+dj;
+        if (a<0||b<0||a>=nx||b>=ny) continue;
+        const q = b*nx+a; if (level[q] === 3 && !seen[q]) { seen[q]=1; stack.push(q); }
+      }
+    }
+    out.push({cnt:c, peak:bw, px, py, w:mxx-mnx+cell, h:mxy-mny+cell});
+  }
+  out.sort((a,b) => b.peak - a.peak);
+  const big = Math.max(...out.map(r => r.cnt), 0);
+  return out.filter((r, i) => i === 0 || r.cnt >= Math.max(3, big * 0.05));
+}
+
+/* ---------- answer check ---------- */
+function haversine(a, b){
+  const R = 6371000, t = Math.PI/180;
+  const dLat = (b[0]-a[0])*t, dLng = (b[1]-a[1])*t;
+  const h = Math.sin(dLat/2)**2 + Math.cos(a[0]*t)*Math.cos(b[0]*t)*Math.sin(dLng/2)**2;
+  return 2*R*Math.asin(Math.sqrt(h));
+}
+function drawTruth(){
+  if (truthMarker) { map.removeLayer(truthMarker); truthMarker = null; }
+  $('#truthClear').hidden = !state.truth;
+  if (!state.truth) return;
+  truthMarker = L.marker([state.truth.lat, state.truth.lng], {draggable:true, icon:L.divIcon({className:'', html:'<div class="truth">★</div>', iconSize:[28,28], iconAnchor:[14,14]}), zIndexOffset:1000}).addTo(map);
+  truthMarker.bindTooltip('正解の位置', {direction:'top', offset:[0,-14]});
+  truthMarker.on('dragend', e => { const ll = e.target.getLatLng(); state.truth = {lat:ll.lat, lng:ll.lng}; save(); renderCheck(); });
+}
+function renderCheck(){
+  const box = $('#check');
+  if (!state.truth || !state.points.length) { box.hidden = true; return; }
+  box.hidden = false;
+  const t = [state.truth.lat, state.truth.lng];
+  const ratios = [];
+  const rows = state.points.map((p, i) => {
+    const r = road(p), m = mid(r), d = Math.min(...locsOf(p).map(a => haversine(a, t)));
+    const rho = m / Math.max(d, 1);
+    let st;
+    if (d > r.hi + state.slack) st = `<span class="warn">直線が道のりより長い</span>`;
+    else { st = `<span class="ok">範囲内</span>`; if (p.on) ratios.push(rho); }
+    return `<tr><td><span class="dot" style="--c:${COLORS[i % COLORS.length]};display:inline-grid;width:18px;height:18px;font-size:10px;margin-right:4px">${i+1}</span>${esc(p.name)}</td>
+      <td class="num">${fmtM(m)}</td><td class="num">${fmtM(d)}</td><td class="num">×${rho.toFixed(2)}</td><td>${st}</td></tr>`;
+  }).join('');
+  let where = '';
+  if (lastGrid) {
+    const [x, y] = lastGrid.toXY(...t);
+    const i = Math.floor((x - lastGrid.x0) / lastGrid.cell), j = Math.floor((lastGrid.y1 - y) / lastGrid.cell);
+    const lv = (i>=0 && j>=0 && i<lastGrid.nx && j<lastGrid.ny) ? lastGrid.level[j*lastGrid.nx+i] : 0;
+    where = ['<span class="warn">正解は範囲の外です</span>','正解は「ありうる範囲」に入っています（上位90%の外）','<span class="ok">正解は上位90%に入っています</span>','<span class="ok">正解は上位50%に入っています</span>'][lv];
+  }
+  const gm = ratios.length ? Math.exp(ratios.reduce((s,r)=>s+Math.log(r),0)/ratios.length) : null;
+  box.innerHTML = `<div style="font-size:14px">${where}</div>
+    <div class="tbl"><table><thead><tr><th>地点</th><th>道のり</th><th>直線</th><th>迂回率</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+    ${gm ? `<div class="row"><span style="font-size:13px">この物件の平均迂回率 <b class="num">×${gm.toFixed(2)}</b></span><button id="applyMu">設定に使う</button></div>` : ''}
+    <p class="hint">「直線が道のりより長い」地点は、ピンの位置が違う（別の同名の駅・施設、出入口が離れている）可能性が高いです。</p>`;
+  const ab = $('#applyMu');
+  if (ab) ab.onclick = () => { state.mu = Math.min(1.8, Math.max(1, Math.round(gm*20)/20)); save(); syncSettings(); refresh(); };
+}
+let truthPicking = false;
+$('#truthBtn').onclick = () => { picking = false; truthPicking = !truthPicking; updatePickUI(); };
+$('#truthClear').onclick = () => { state.truth = null; save(); drawTruth(); renderCheck(); };
+
+/* ---------- list UI ---------- */
+function unitOf(p){ return p.mode === 'walk' ? '分' : 'm'; }
+function renderList(){
+  const ul = $('#points');
+  $('#sampleBanner').hidden = !state.sample;
+  if (!state.points.length) { ul.innerHTML = '<li class="empty">まだ地点がありません。上の欄から追加してください。</li>'; return; }
+  ul.innerHTML = state.points.map((p, i) => {
+    const r = road(p);
+    return `<li class="pt${p.on?'':' off'}" data-id="${p.id}">
+      <span class="dot" style="--c:${COLORS[i % COLORS.length]}">${i+1}</span>
+      <input type="text" class="pname" id="name-${p.id}" value="${esc(p.name)}" aria-label="地点名">
+      <button class="del" aria-label="${esc(p.name)}を削除">×</button>
+      <div class="ctl">
+        <select class="pmode" id="mode-${p.id}" aria-label="条件の種類">
+          <option value="dist"${p.mode==='dist'?' selected':''}>道のり</option>
+          <option value="walk"${p.mode==='walk'?' selected':''}>徒歩</option>
+        </select>
+        <input type="number" class="pval num" id="val-${p.id}" min="1" step="1" value="${p.value}" aria-label="値">
+        <span>${unitOf(p)}</span>
+        <label><input type="checkbox" class="pon" id="on-${p.id}"${p.on?' checked':''}>使う</label>
+        <span class="rng num">直線 最大${fmtM(r.hi + state.slack)}</span>
+      </div>
+      ${p.alts && p.alts.length > 1 ? `<p class="note">候補<b class="num">${p.alts.length}</b>か所のどれか1つとして計算中。違うと分かるピンはクリックで外せます。</p>`
+        : p.auto ? `<p class="note warn">自動で配置：${esc(p.found||'')}。合っているかピンの位置を確認してください。</p>` : ''}
+    </li>`;
+  }).join('');
+}
+
+$('#points').addEventListener('input', e => {
+  const li = e.target.closest('.pt'); if (!li) return;
+  const p = state.points.find(x => x.id == li.dataset.id);
+  if (e.target.classList.contains('pname')) { p.name = e.target.value; save(); return; }
+  if (e.target.classList.contains('pval')) {
+    const v = parseFloat(e.target.value); if (!(v > 0)) return;
+    p.value = v; li.querySelector('.rng').textContent = `直線 最大${fmtM(road(p).hi + state.slack)}`;
+    dirty();
+  }
+});
+$('#points').addEventListener('change', e => {
+  const li = e.target.closest('.pt'); if (!li) return;
+  const p = state.points.find(x => x.id == li.dataset.id);
+  if (e.target.classList.contains('pmode')) {
+    p.mode = e.target.value;
+    if (p.mode === 'dist' && p.value < 60) p.value = p.value * WALK;
+    if (p.mode === 'walk' && p.value >= 60) p.value = Math.ceil(p.value / WALK);
+  }
+  if (e.target.classList.contains('pon')) p.on = e.target.checked;
+  if (e.target.classList.contains('pname')) { drawPoints(); renderCheck(); return; }
+  state.sample = false; save(); refresh();
+});
+$('#points').addEventListener('click', e => {
+  if (!e.target.classList.contains('del')) return;
+  const id = e.target.closest('.pt').dataset.id;
+  state.points = state.points.filter(p => p.id != id);
+  save(); refresh();
+});
+
+let tm;
+function dirty(){ clearTimeout(tm); tm = setTimeout(() => { state.sample = false; save(); drawPoints(); compute(); }, 120); }
+function refresh(){ renderList(); drawPoints(); compute(); }
+
+function addPoint(o){
+  if (state.sample) { state.points = []; state.sample = false; state.truth = null; drawTruth(); }
+  state.points.push({id: nextId++, on: true, ...o});
+  save(); refresh();
+}
+
+/* ---------- geocoding ---------- */
+async function geocode(q){
+  const b = state.area ? areaBounds().pad(1) : map.getBounds().pad(2);
+  const vb = [b.getWest(), b.getNorth(), b.getEast(), b.getSouth()].join(',');
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&countrycodes=jp&accept-language=ja&viewbox=${vb}&q=${encodeURIComponent(q)}`);
+    const j = await r.json();
+    if (j.length) return j.map(x => ({label: x.display_name, lat: +x.lat, lng: +x.lon}));
+  } catch(e) {}
+  try {
+    const r = await fetch('https://msearch.gsi.go.jp/address-search/AddressSearch?q=' + encodeURIComponent(q));
+    const j = await r.json();
+    return j.slice(0, 6).map(x => ({label: x.properties.title, lat: x.geometry.coordinates[1], lng: x.geometry.coordinates[0]}));
+  } catch(e) {}
+  return [];
+}
+const shortLabel = s => s.split(',').slice(0, 3).map(x => x.trim()).join('、');
+
+function syncUnit(){ $('#unit').textContent = $('#mode').value === 'walk' ? '分' : 'm'; }
+$('#mode').addEventListener('change', () => {
+  const v = $('#val'); if ($('#mode').value === 'dist' && +v.value < 60) v.value = +v.value * WALK;
+  if ($('#mode').value === 'walk' && +v.value >= 60) v.value = Math.ceil(+v.value / WALK);
+  syncUnit();
+});
+function formCond(){ return {mode: $('#mode').value, value: Math.max(1, parseFloat($('#val').value) || 1)}; }
+
+async function doSearch(){
+  const q = $('#q').value.trim(); if (!q) { $('#q').focus(); return; }
+  const btn = $('#searchBtn'); btn.disabled = true; btn.textContent = '検索中…';
+  const cond = formCond();
+  const {list} = await findLandmark(q, road(cond).hi);
+  btn.disabled = false; btn.textContent = '検索';
+  const ul = $('#cands');
+  if (!list.length) { ul.innerHTML = '<li class="hint">見つかりませんでした。別の書き方（「○○駅」「○○市○○町」）か、地図をタップして置いてください。</li>'; return; }
+  ul.innerHTML = (list.length > 1 ? `<li><button class="primary" id="allCands">${list.length}か所すべてを候補にする（どれか1つ）</button></li>` : '') +
+    list.slice(0, 12).map((c, i) => `<li><button data-i="${i}">${esc(shortLabel(c.label) || `候補${i+1}`)}</button></li>`).join('');
+  const all = $('#allCands');
+  if (all) all.onclick = () => {
+    addPoint({name: q, lat: list[0].lat, lng: list[0].lng, alts: list.slice(0, 40).map(x => [x.lat, x.lng]), ...cond, auto: true, found: `${list.length}か所を候補にしました（どれか1つ）。違うと分かるピンはクリックで外せます`});
+    ul.innerHTML = ''; $('#q').value = '';
+  };
+  ul.querySelectorAll('button[data-i]').forEach(b => b.onclick = () => {
+    const c = list[b.dataset.i];
+    addPoint({name: q, lat: c.lat, lng: c.lng, ...formCond()});
+    ul.innerHTML = ''; $('#q').value = '';
+    map.setView([c.lat, c.lng], Math.max(map.getZoom(), 15));
+  });
+}
+$('#searchBtn').onclick = doSearch;
+$('#q').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) doSearch(); });
+
+let picking = false;
+function updatePickUI(){
+  $('#pickBtn').textContent = picking ? 'タップ待ち…（取り消す）' : '地図をタップして置く';
+  $('#truthBtn').textContent = truthPicking ? 'タップ待ち…（取り消す）' : (state.truth ? '正解の位置を置き直す' : '正解の位置を置く');
+  $('#map').classList.toggle('picking', picking || truthPicking);
+}
+$('#pickBtn').onclick = () => { truthPicking = false; picking = !picking; updatePickUI(); };
+map.on('click', e => {
+  if (truthPicking) {
+    truthPicking = false; state.truth = {lat: e.latlng.lat, lng: e.latlng.lng};
+    save(); drawTruth(); renderCheck(); setTimeout(updatePickUI); return;
+  }
+  if (!picking) return;
+  const name = $('#q').value.trim() || `地点${state.points.length + 1}`;
+  addPoint({name, lat: e.latlng.lat, lng: e.latlng.lng, ...formCond()});
+  $('#q').value = '';
+  setTimeout(() => { picking = false; updatePickUI(); });
+});
+
+/* ---------- paste parser ---------- */
+function z2h(s){
+  return s.replace(/[０-９．，]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+          .replace(/[ｍＭ]/g, 'm').replace(/[ｋＫ]/g, 'k').replace(/　/g, ' ').replace(/（/g, '(').replace(/）/g, ')');
+}
+function cleanName(seg){
+  let line = seg.split('\n').pop();
+  const q = [...line.matchAll(/[「『]([^」』]+)[」』]\s*(駅|停)?/g)].pop();
+  let name;
+  if (q) { name = q[1]; if (q[2] === '駅' && !/駅$/.test(name)) name += '駅'; }
+  else {
+    name = line.replace(/^[\s)、,/／・:：]+/, '').replace(/[\s:：]*(?:まで|より|から|迄)?[\s:：]*(?:約)?[\s:：(]*$/, '');
+    name = name.replace(/^.*?(線|ライン)\s+/, '').replace(/バス\s*\d+\s*分/g, '');
+  }
+  return name.replace(/\([^)]*\)/g, '').replace(/^[\s、,/]+|[\s、,/]+$/g, '').trim();
+}
+function parseListing(text){
+  const s = z2h(text), out = [];
+  const re = /徒歩\s*(?:約)?\s*(\d+)\s*分(?:\s*\(\s*(?:約)?\s*(\d[\d,]*(?:\.\d+)?)\s*(km|m)\s*\))?|(\d[\d,]*(?:\.\d+)?)\s*(km|m)(?![²2a-z])/gi;
+  let m, prev = 0;
+  while ((m = re.exec(s))) {
+    const name = cleanName(s.slice(prev, m.index));
+    prev = re.lastIndex;
+    let mode, value;
+    if (m[1]) {
+      if (m[2]) { mode = 'dist'; value = parseFloat(m[2].replace(/,/g,'')) * (m[3].toLowerCase()==='km'?1000:1); }
+      else { mode = 'walk'; value = +m[1]; }
+    } else { mode = 'dist'; value = parseFloat(m[4].replace(/,/g,'')) * (m[5].toLowerCase()==='km'?1000:1); }
+    if (value > 0) out.push({name, mode, value});
+  }
+  return out;
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+$('#parseBtn').onclick = async () => {
+  const items = parseListing($('#paste').value);
+  const st = $('#status');
+  if (!items.length) { st.innerHTML = '<span class="warn">「徒歩◯分」や「◯m」が見つかりませんでした。</span>'; return; }
+  const btn = $('#parseBtn'); btn.disabled = true;
+  let unnamed = 0, first = true;
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (!it.name) {
+      const c = map.getCenter();
+      addPoint({name: `地点${state.points.length + 1}`, lat: c.lat, lng: c.lng + unnamed*0.003, mode: it.mode, value: it.value, auto: true, found: '名前が読み取れないので地図の中央に仮置き。正しい場所へドラッグしてください'});
+      unnamed++; continue;
+    }
+    st.textContent = `${i+1}/${items.length}　${it.name} を検索中…`;
+    const {list, multi} = await findLandmark(it.name, road(it).hi);
+    if (list.length && multi && list.length > 1) {
+      addPoint({name: it.name, lat: list[0].lat, lng: list[0].lng, alts: list.slice(0, 40).map(x => [x.lat, x.lng]), mode: it.mode, value: it.value, auto: true,
+        found: `周辺の${list.length}か所を候補にしました（どれか1つ）。違うと分かるピンはクリックで外せます`});
+    } else if (list.length) {
+      addPoint({name: it.name, lat: list[0].lat, lng: list[0].lng, mode: it.mode, value: it.value, auto: true, found: shortLabel(list[0].label)});
+      if (first && !state.area) { map.setView([list[0].lat, list[0].lng], 14); first = false; }
+    } else {
+      const c = map.getCenter();
+      addPoint({name: it.name, lat: c.lat, lng: c.lng, mode: it.mode, value: it.value, auto: true, found: '見つからず地図の中央に仮置き'});
+    }
+    if (i < items.length - 1) await sleep(1100);
+  }
+  btn.disabled = false;
+  st.textContent = `${items.length}地点を追加しました。注意の出ている地点はピンの位置を確かめてください。`;
+  fitAll();
+};
+
+$('#clearBtn').onclick = () => { state.points = []; state.sample = false; state.truth = null; save(); drawTruth(); refresh(); };
+
+/* settings */
+function syncSettings(){
+  $('#mu').value = state.mu; $('#muOut').textContent = '×' + (+state.mu).toFixed(2);
+  $('#slack').value = state.slack; $('#slackOut').textContent = '±' + state.slack + 'm';
+  $('#ovOp').value = state.ovOp; $('#ovOpOut').textContent = Math.round(state.ovOp*100) + '%';
+}
+$('#mu').addEventListener('input', e => { state.mu = +e.target.value; syncSettings(); dirty(); });
+$('#slack').addEventListener('input', e => { state.slack = +e.target.value; syncSettings(); renderList(); dirty(); });
+
+function fitAll(){
+  if (state.area) { map.fitBounds(areaBounds().pad(0.15), {padding:[20, 20], maxZoom:17}); return; }
+  const pts = state.points; if (!pts.length) { map.setView([35.681, 139.767], 13); return; }
+  const b = L.latLngBounds(pts.map(p => [p.lat, p.lng]));
+  pts.forEach(p => locsOf(p).forEach(a => b.extend(L.latLng(a[0], a[1]).toBounds((road(p).hi + state.slack) * 2))));
+  map.fitBounds(b, {padding: [20, 20]});
+}
+
+syncUnit(); syncSettings(); syncGridMode(); updatePickUI(); renderOvList();
+drawArea();
+if (state.area) { $('#areaQ').value = state.area.name.replace(/（全丁目）$/, ''); $('#areaStatus').innerHTML = `<span class="ok">${esc(state.area.name)}</span> の範囲内で推定します（境界：${esc(state.area.src)}）。`; }
+fitAll(); drawTruth(); refresh(); syncOverlays();
+addUrbanLater.forEach(s => { try { addUrban(s.geo, s.name, false); } catch(e) {} });
+window.addEventListener('resize', () => map.invalidateSize());
+</script>
+</body>
+</html>
