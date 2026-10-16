@@ -1049,10 +1049,10 @@ map.on('click', e => {
 
 /* ---------- landmark search near the base area ---------- */
 const CHAINS = [
-  ['セブン-?イレブン|セブンイレブン|ｾﾌﾞﾝ', 'セブン'], ['ファミリーマート|ファミマ', 'ファミリーマート'], ['ローソン', 'ローソン'],
+  ['セブン-?イレブン|セブンイレブン|ｾﾌﾞﾝ-?ｲﾚﾌﾞﾝ|7-?eleven|seven-?eleven', 'セブン-イレブン'], ['ファミリーマート|ファミマ', 'ファミリーマート'], ['ローソン', 'ローソン'],
   ['ミニストップ', 'ミニストップ'], ['デイリーヤマザキ', 'デイリーヤマザキ'], ['セイコーマート', 'セイコーマート'], ['ニューデイズ|NewDays', 'NewDays'],
   ['ヤオコー', 'ヤオコー'], ['イオン', 'イオン'], ['マルエツ', 'マルエツ'], ['ベルク', 'ベルク'], ['ライフ', 'ライフ'], ['西友', '西友'],
-  ['ウエルシア', 'ウエルシア'], ['マツモトキヨシ|マツキヨ', 'マツモトキヨシ'], ['ツルハ', 'ツルハ'], ['スギ薬局', 'スギ'], ['サンドラッグ', 'サンドラッグ'], ['クリエイト', 'クリエイト'],
+  ['ウエルシア', 'ウエルシア'], ['マツモトキヨシ|マツキヨ', 'マツモトキヨシ'], ['ツルハ', 'ツルハドラッグ'], ['スギ薬局', 'スギ薬局'], ['サンドラッグ', 'サンドラッグ'], ['クリエイト', 'クリエイト'],
   ['カインズ', 'カインズ'], ['業務スーパー', '業務スーパー'], ['しまむら', 'しまむら'], ['マクドナルド', 'マクドナルド']
 ];
 const CATS = [
@@ -1071,8 +1071,11 @@ const CATS = [
   [/^(交番)$/, '["amenity"="police"]']
 ];
 const rxEsc = s => s.replace(/[.*+?^${}()|[\]\\"]/g, '\\$&');
+const rxPart = t => new RegExp(rxEsc(t) + (/\d$/.test(t) ? '(?!\\d)' : ''));
 async function overpass(filter, b){
-  const q = `[out:json][timeout:20];nwr${filter}(${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()});out center 60;`;
+  const box = `${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}`;
+  const fs = Array.isArray(filter) ? filter : [filter];
+  const q = `[out:json][timeout:20];(${fs.map(f => `nwr${f}(${box});`).join('')});out center 80;`;
   const r = await fetch('https://overpass-api.de/api/interpreter', {method:'POST', body:'data=' + encodeURIComponent(q), headers:{'Content-Type':'application/x-www-form-urlencoded'}});
   if (!r.ok) throw new Error('overpass');
   const j = await r.json();
@@ -1120,7 +1123,7 @@ async function placeRef(branch){
       const j = await r.json();
       const strip = s => s.replace(/市|区|郡/g, '');
       const tail = strip(b).slice(-Math.min(4, strip(b).length));
-      const hit = j.find(x => new RegExp(rxEsc(tail) + '(?!\\d)').test(strip(nrm(x.properties.title))));
+      const hit = j.find(x => rxPart(tail).test(strip(nrm(x.properties.title))));
       if (hit) return {lat: hit.geometry.coordinates[1], lng: hit.geometry.coordinates[0], label: hit.properties.title};
     } catch(e) {}
   }
@@ -1139,58 +1142,82 @@ async function findLandmark(name, maxDist){
   const branch = chain ? stripChain(nm, chain) : '';
   const bN = nrm(branch);
 
-  // where to search: base area > place named in the branch > current view if zoomed in
-  let ref = null, bb = null, center = null;
-  if (state.area) { bb = padBounds(areaBounds(), pad); center = areaBounds().getCenter(); }
-  if (bN.length >= 2) {
-    ref = await placeRef(branch);
-    if (ref && (!bb || bb.contains([ref.lat, ref.lng]))) { center = L.latLng(ref.lat, ref.lng); if (!bb) bb = L.latLng(ref.lat, ref.lng).toBounds(5000); }
-  }
-  if (!bb) { const v = map.getBounds(); if (haversine([v.getSouth(), v.getWest()], [v.getNorth(), v.getEast()]) < 25000) { bb = v; center = v.getCenter(); } }
+  // where to search. The place named in a branch ("越谷レイクタウン") wins over the base area,
+  // because the person typed it on purpose; the base area is used when there is no such place.
+  let ref = null, center = null, farNote = '';
+  const areaBB = state.area ? padBounds(areaBounds(), pad) : null;
+  if (bN.length >= 2) ref = await placeRef(branch);
+  const refBB = ref ? L.latLng(ref.lat, ref.lng).toBounds(6000) : null;
+  if (ref) {
+    center = L.latLng(ref.lat, ref.lng);
+    if (areaBB && !areaBB.contains(center)) farNote = `（「${ref.label}」は基準の住所から${kmText(haversine([ref.lat, ref.lng], [areaBounds().getCenter().lat, areaBounds().getCenter().lng]))}離れています）`;
+  } else if (state.area) center = areaBounds().getCenter();
+  let viewBB = null;
+  if (!refBB && !areaBB) { const v = map.getBounds(); if (haversine([v.getSouth(), v.getWest()], [v.getNorth(), v.getEast()]) < 25000) { viewBB = v; center = v.getCenter(); } }
+  const boxes = [refBB, areaBB, viewBB].filter(Boolean);
 
   const finish = (list, multi, note = '') => {
     for (const x of list) { x.dist = center ? haversine([center.lat, center.lng], [x.lat, x.lng]) : null; }
     list.sort((a, b) => (b.match||0) - (a.match||0) || (a.dist ?? 0) - (b.dist ?? 0));
-    return {list, multi, note, ref};
+    return {list, multi, note: note + (note ? farNote : ''), ref};
   };
+  const score = l => {
+    const reFull = rxPart(bN), reTail = bN.length >= 4 ? rxPart(bN.slice(-4)) : null;
+    l.forEach(x => {
+      const k = nrm(x.key || x.label);
+      const own = nrm(stripChain(z2h(x.label || '').replace(/\s+/g, ''), chain || ['^$']));
+      x.match = own === bN ? 3 : reFull.test(k) ? 2 : (reTail && reTail.test(k)) ? 1 : 0;
+    });
+    const same = l.filter(x => x.match === 3);
+    if (same.length === 1) return same;
+    return l.filter(x => x.match >= 2);
+  };
+  const chainRe = chain ? chain[0].replace(/-\?/g, '[-ー－]?') : '';
+  const chainFilter = chain ? [`["name"~"${chainRe}",i]`, `["brand"~"${chainRe}",i]`, `["brand:ja"~"${chainRe}",i]`] : null;
+  let pool = [];   // chain stores collected from every box, for the fallback list
 
-  if (bb) {
-    try {
-      if (cat) { const l = await overpass(cat[1], bb); if (l.length) return finish(l, true); }
-      if (chain) {
-        const l = await overpass(`["name"~"${chain[1]}"]`, bb);
-        if (l.length) {
-          if (!bN) return finish(l, true);
-          const reFull = new RegExp(rxEsc(bN) + '(?!\\d)'), reTail = bN.length >= 4 ? new RegExp(rxEsc(bN.slice(-4)) + '(?!\\d)') : null;
-          l.forEach(x => { const k = nrm(x.key); x.match = reFull.test(k) ? 2 : (reTail && reTail.test(k)) ? 1 : 0; });
-          const exact = l.filter(x => x.match === 2);
+  try {
+    if (cat && boxes[0]) { const l = await overpass(cat[1], boxes[0]); if (l.length) return finish(l, true); }
+    if (chain) {
+      for (const bx of boxes) {
+        const l = await overpass(chainFilter, bx);
+        for (const x of l) if (!pool.some(o => haversine([o.lat, o.lng], [x.lat, x.lng]) < 25)) pool.push(x);
+        if (!bN && l.length) return finish(l, true);
+        if (bN) {
+          const exact = score(l);
           if (exact.length === 1) return finish(exact, false, `「${branch}」の店舗が見つかりました`);
-          if (exact.length > 1) return finish(exact, false, `「${branch}」に合う店舗が${exact.length}件あります。地図で選んでください`);
-          if (ref) {
-            const near = l.map(x => ({x, d: haversine([ref.lat, ref.lng], [x.lat, x.lng])})).filter(o => o.d < 1200).map(o => o.x);
-            if (near.length) return finish(near, false, `支店名で一致する店舗がなかったので、「${ref.label}」の近くにある同じチェーンの店舗を近い順に出しています。地図の番号で選んでください`);
-          }
-          return finish(l, false, `支店名で一致する店舗がありませんでした。近い順に出しているので地図で選んでください`);
+          if (exact.length > 1) return finish(exact, false, `「${branch}」に合う店舗が${exact.length}件あります。地図の番号で選んでください`);
         }
       }
-      if (!cat && !chain) {
-        const flex = [...nm].map(rxEsc).join('[ 　・-]*');
-        const l = await overpass(`["name"~"${flex}"]`, bb);
-        if (l.length) return finish(l, false);
-      }
-    } catch(e) {}
+    } else if (!cat && boxes[0]) {
+      const flex = [...nm].map(rxEsc).join('[ 　・-]*');
+      const l = await overpass(`["name"~"${flex}"]`, boxes[0]);
+      if (l.length) return finish(l, false);
+    }
+  } catch(e) {}
+
+  // the store itself may be findable by its full name
+  if (chain && bN) {
+    for (const q of [`${chain[1]} ${branch}店`, name]) {
+      const g = (await geocode(q)).map(x => ({...x, addr: x.label, key: x.label}));
+      const exact = score(g).filter(x => new RegExp(chainRe, 'i').test(nrm(x.label)));
+      if (exact.length) return finish(exact, false, `「${branch}」の店舗が見つかりました`);
+    }
+    if (pool.length) {
+      score(pool);
+      const near = ref ? pool.filter(x => haversine([ref.lat, ref.lng], [x.lat, x.lng]) < 1500) : pool;
+      if (near.length) return finish(near, false, ref
+        ? `地図データに「${branch}」という支店名が登録されていないため、「${ref.label}」付近の${chain[1]}を近い順に出しています。地図の番号で選んでください`
+        : `支店名で一致する店舗がありませんでした。近い順に出しているので地図の番号で選んでください`);
+    }
   }
-  // nominatim: full name, then chain + branch-place
-  const qs = [name];
-  if (chain && branch) qs.push(`${chain[1]} ${branch}`);
-  for (const q of qs) {
-    const g = await geocode(q);
-    let l = g.map(x => ({...x, addr: x.label}));
-    if (bb) { const inb = l.filter(x => bb.contains([x.lat, x.lng])); if (inb.length) l = inb; }
-    if (bN) l.forEach(x => x.match = nrm(x.label).includes(bN) ? 2 : 0);
-    if (l.length) return finish(l, false, bb ? '' : '基準の住所を設定すると、その周辺の店舗だけに絞れます');
-  }
-  return finish([], false);
+  if (cat || (chain && !bN)) { if (pool.length) return finish(pool, true); }
+
+  // nominatim as the last resort
+  const g = await geocode(chain && branch ? `${chain[1]} ${branch}` : name);
+  let l = g.map(x => ({...x, addr: x.label}));
+  const inb = l.filter(x => boxes.some(bx => bx.contains([x.lat, x.lng]))); if (inb.length) l = inb;
+  return finish(l, false, boxes.length ? '' : '基準の住所を設定すると、その周辺だけに絞れます');
 }
 
 function components(level, nx, ny, cell, x0, y1, w){
@@ -1377,7 +1404,7 @@ async function doSearch(){
   };
   // numbered markers so the list can be matched to the map
   list.forEach((c, i) => {
-    const m = L.marker([c.lat, c.lng], {icon: L.divIcon({className:'', html:`<div class="cand${c.match===2?' hit':''}">${i+1}</div>`, iconSize:[24,24], iconAnchor:[12,12]}), zIndexOffset:900}).addTo(map);
+    const m = L.marker([c.lat, c.lng], {icon: L.divIcon({className:'', html:`<div class="cand${c.match>=2?' hit':''}">${i+1}</div>`, iconSize:[24,24], iconAnchor:[12,12]}), zIndexOffset:900}).addTo(map);
     m.bindTooltip(`${i+1}. ${esc(c.label || '名称なし')}<br>クリックでこれを選ぶ`, {direction:'top', offset:[0,-12]});
     m.on('click', ev => { L.DomEvent.stop(ev); pick(c); });
     candMarkers.push(m);
@@ -1387,7 +1414,7 @@ async function doSearch(){
   map.fitBounds(fb.pad(0.3), {maxZoom:17});
   ul.innerHTML = (note ? `<li class="hint">${esc(note)}</li>` : '') +
     (multi && all.length > 1 ? `<li><button class="primary" id="allCands">${all.length}か所すべてを候補にする（どれか1つ）</button></li>` : '') +
-    list.map((c, i) => `<li><button data-i="${i}"${c.match===2?' class="hitbtn"':''}><b class="num">${i+1}</b>　${esc(c.label || '名称なし')}${c.match===2?' <span class="ok">✓支店名一致</span>':''}
+    list.map((c, i) => `<li><button data-i="${i}"${c.match>=2?' class="hitbtn"':''}><b class="num">${i+1}</b>　${esc(c.label || '名称なし')}${c.match>=2?' <span class="ok">✓支店名一致</span>':''}
       <small style="display:block;color:var(--muted)">${c.dist != null ? `${ref ? '支店名の地名' : '基準'}から${kmText(c.dist)}` : ''}${c.addr && c.addr !== c.label ? `　${esc(shortLabel(c.addr))}` : ''}</small></button></li>`).join('') +
     (all.length > list.length ? `<li class="hint">ほか${all.length - list.length}件（近い順に15件まで表示）</li>` : '') +
     `<li><button class="ghost" id="candCancel">閉じる</button></li>`;
